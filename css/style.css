@@ -1,10 +1,44 @@
+/* ============================================================
+ * イビルライトフォース  見た目
+ * テーマ：堕天使・悪魔・高貴（金の縁取り＋尖った角、左＝天使の蒼い星空、右＝ルシファーの紅蓮）
+ * 色や形は下の変数でまとめて調整できます。
+ * ============================================================ */
+:root {
+  /* 金の縁（明るい → 暗い） */
+  --gold-hi: #fff4c8;
+  --gold-1: #f6d77a;
+  --gold-2: #d9a83e;
+  --gold-3: #9a6a1c;
+  --gold-4: #4a2c08;
+  --gold-bevel: linear-gradient(180deg, var(--gold-hi) 0%, var(--gold-1) 22%, var(--gold-2) 48%, var(--gold-3) 70%, var(--gold-1) 88%, var(--gold-4) 100%);
+  --ink: #12070a;            /* 金の縁の内側の細い黒線 */
+  /* 天使側（蒼・星空・紫の光） */
+  --angel-deep: #060a2a;
+  --angel-mid: #13308a;
+  --angel-hi: #3f6cff;
+  --angel-glow: #9b6bff;
+  /* ルシファー側（黒・紅蓮・橙金） */
+  --luci-deep: #120204;
+  --luci-mid: #7a0a10;
+  --luci-hi: #e2361c;
+  --luci-glow: #ff9a2e;
+  /* 文字 */
+  --serif-jp: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", "Noto Serif JP", "MS PMincho", serif;
+  --serif-en: "Cinzel", "Trajan Pro", "Times New Roman", serif;
+  /* 尖った形（clip-path） */
+  --cut: 16px;
+  --chamfer: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)), calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut));
+  --point: 16px;
+  --pointed: polygon(var(--point) 0, calc(100% - var(--point)) 0, 100% 50%, calc(100% - var(--point)) 100%, var(--point) 100%, 0 50%);
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html, body {
   width: 100%; height: 100%; overflow: hidden; background: #000;
   touch-action: none; overscroll-behavior: none;
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
-  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", Meiryo, sans-serif;
-  color: #fff;
+  font-family: var(--serif-jp);
+  color: #f6ecd6;
 }
 #stage {
   position: absolute; left: 50%; top: 50%;
@@ -13,56 +47,203 @@ html, body {
   transform: translate(-50%, -50%);
   overflow: hidden;
 }
-#game { display: block; width: 100%; height: 100%; background: #111; }
+#game { display: block; width: 100%; height: 100%; background: #07040e; }
 
+/* ---------- 画面（タイトル・結果）共通 ---------- */
 .screen {
   position: absolute; inset: 0; display: none;
-  flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-  background: rgba(10, 8, 30, 0.72);
+  flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  /* 左＝天使の蒼、右＝ルシファーの紅、中央は暗く */
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(0,0,0,0) 30%, rgba(0,0,0,.55) 100%),
+    linear-gradient(90deg, rgba(8,16,70,.78) 0%, rgba(14,8,30,.62) 42%, rgba(18,6,14,.62) 58%, rgba(80,8,10,.78) 100%);
 }
 .screen.active { display: flex; }
 
-.game-title { font-size: 46px; letter-spacing: 2px; text-shadow: 0 0 12px #9cf, 0 0 24px #f6c; }
-.game-title span { font-size: 28px; color: #fc6; margin: 0 8px; }
-.subtitle { font-size: 18px; opacity: .9; }
+/* ---------- タイトルロゴ ---------- */
+/* ロゴ画像の差し込み口：assets/ui-config.js の titleLogo.src。画像が出ると .has-image が付き、文字は隠れます */
+.title-logo { display: flex; align-items: center; justify-content: center; }
+.title-logo-img { display: block; max-width: 620px; max-height: 150px; object-fit: contain; filter: drop-shadow(0 4px 10px rgba(0,0,0,.6)); }
+.title-logo.has-image .title-logo-text { display: none; }
 
-.char-select { display: flex; gap: 28px; }
+.game-title {
+  font-family: var(--serif-jp); font-weight: 800; font-size: 50px; letter-spacing: 6px; line-height: 1.15;
+  background: linear-gradient(180deg, #fffbe6 0%, var(--gold-1) 35%, var(--gold-2) 60%, #fff0b8 78%, var(--gold-3) 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter:
+    drop-shadow(0 0 1px var(--ink)) drop-shadow(0 0 1px var(--ink)) drop-shadow(0 2px 0 var(--gold-4))
+    drop-shadow(-6px 0 10px rgba(90,110,255,.75)) drop-shadow(6px 0 10px rgba(255,70,30,.7));
+}
+.subtitle {
+  font-size: 17px; letter-spacing: 3px; color: #efe1bd;
+  text-shadow: 0 0 6px rgba(0,0,0,.9), 0 1px 0 #000;
+}
+.subtitle .orn { color: var(--gold-1); font-size: 13px; text-shadow: 0 0 8px rgba(255,200,90,.8); }
+
+/* ---------- 金縁フレーム（共通の仕組み） ----------
+ * ::before = 金のベベル、::after = 内側（細い黒線＋塗り）。形は --frame-shape で指定。 */
+.char-btn, .main-btn, .sub-btn, .result-panel {
+  position: relative; isolation: isolate; border: none; background: none;
+}
+.char-btn::before, .main-btn::before, .sub-btn::before, .result-panel::before,
+.char-btn::after, .main-btn::after, .sub-btn::after, .result-panel::after {
+  content: ''; position: absolute; pointer-events: none;
+  clip-path: var(--frame-shape);
+}
+.char-btn::before, .main-btn::before, .sub-btn::before, .result-panel::before {
+  inset: 0; z-index: -2; background: var(--gold-bevel);
+}
+.char-btn::after, .main-btn::after, .sub-btn::after, .result-panel::after {
+  inset: var(--bevel, 3px); z-index: -1;
+  border: 1.5px solid transparent;
+  background: var(--frame-fill) padding-box, var(--ink) border-box;
+}
+
+/* ---------- キャラ選択ボタン ---------- */
+.char-select { display: flex; gap: 34px; }
 .char-btn {
-  width: 220px; padding: 14px 10px; border-radius: 14px; border: 3px solid transparent;
-  background: rgba(255,255,255,.08); color: #fff; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: 6px; font-family: inherit;
+  --frame-shape: var(--chamfer);
+  width: 230px; padding: 14px 12px 14px; color: #fff; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 5px; font-family: inherit;
+  transition: transform .15s ease, filter .2s ease;
+  filter: brightness(.72) saturate(.75);
 }
-.char-btn .char-icon { width: 64px; height: 64px; border-radius: 50%; }
-.char-btn.angel .char-icon { background: radial-gradient(circle at 40% 35%, #fff, #ffe9a8 55%, #e0b84a); box-shadow: 0 0 16px #ffe9a8; }
-.char-btn.lucifer .char-icon { background: radial-gradient(circle at 40% 35%, #c9a0ff, #5a1a8a 55%, #1a0526); box-shadow: 0 0 16px #a050ff; }
-.char-btn .char-name { font-size: 20px; font-weight: bold; }
-.char-btn .char-note { font-size: 13px; opacity: .8; line-height: 1.4; }
-.char-btn.angel.selected { border-color: #ffe08a; background: rgba(255,230,140,.18); }
-.char-btn.lucifer.selected { border-color: #b070ff; background: rgba(160,80,255,.2); }
+.char-btn.angel {
+  --frame-fill:
+    radial-gradient(1.2px 1.2px at 18% 22%, #fff 60%, transparent 100%),
+    radial-gradient(1px 1px at 72% 14%, #dfe6ff 60%, transparent 100%),
+    radial-gradient(1.4px 1.4px at 86% 40%, #fff 60%, transparent 100%),
+    radial-gradient(1px 1px at 30% 62%, #cfd8ff 60%, transparent 100%),
+    radial-gradient(1.2px 1.2px at 60% 78%, #fff 60%, transparent 100%),
+    radial-gradient(1px 1px at 10% 86%, #fff 60%, transparent 100%),
+    radial-gradient(ellipse at 50% 38%, rgba(155,107,255,.55) 0%, rgba(155,107,255,0) 60%),
+    linear-gradient(170deg, var(--angel-mid) 0%, #0b1650 45%, var(--angel-deep) 100%);
+}
+.char-btn.lucifer {
+  --frame-fill:
+    radial-gradient(ellipse at 50% 115%, rgba(255,170,60,.85) 0%, rgba(226,54,28,.6) 28%, rgba(122,10,16,0) 62%),
+    radial-gradient(ellipse at 50% 38%, rgba(226,54,28,.35) 0%, rgba(226,54,28,0) 60%),
+    linear-gradient(170deg, #2a0306 0%, var(--luci-deep) 50%, #3a0508 100%);
+}
+.char-btn.selected { filter: none; transform: translateY(-3px); }
+.char-btn.angel.selected   { filter: drop-shadow(0 0 10px rgba(110,140,255,.9)) drop-shadow(0 0 22px rgba(155,107,255,.6)); }
+.char-btn.lucifer.selected { filter: drop-shadow(0 0 10px rgba(255,90,40,.9)) drop-shadow(0 0 22px rgba(255,154,46,.5)); }
+.char-btn:hover:not(.selected) { filter: brightness(.88) saturate(.9); }
 
+/* 顔の丸い額縁（金のリング＋尖った飾り） */
+.char-portrait {
+  position: relative; width: 92px; height: 92px; border-radius: 50%; padding: 4px; flex: none;
+  background: conic-gradient(from 210deg, var(--gold-hi), var(--gold-2), var(--gold-4), var(--gold-1), var(--gold-hi), var(--gold-3), var(--gold-1), var(--gold-hi));
+  box-shadow: 0 0 0 1.5px var(--ink), 0 3px 8px rgba(0,0,0,.6);
+}
+.char-portrait::before, .char-portrait::after { /* 上下のトゲ飾り */
+  content: ''; position: absolute; left: 50%; width: 14px; height: 14px; margin-left: -7px;
+  background: var(--gold-bevel); clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%);
+}
+.char-portrait::before { top: -11px; }
+.char-portrait::after { bottom: -11px; transform: rotate(180deg); }
+.char-icon {
+  position: relative; display: block; width: 100%; height: 100%; border-radius: 50%; overflow: hidden;
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+/* 顔画像が無いときの代わり（光の玉） */
+.char-btn.angel .char-icon { background: radial-gradient(circle at 40% 35%, #fff, #b9c8ff 35%, var(--angel-hi) 60%, var(--angel-deep)); }
+.char-btn.lucifer .char-icon { background: radial-gradient(circle at 40% 35%, #ffe0a0, var(--luci-glow) 30%, var(--luci-hi) 55%, var(--luci-deep)); }
+/* 顔画像があるとき：背景は各陣営の色、顔は canvas で切り抜き */
+.char-btn.angel .char-icon.has-face { background: radial-gradient(circle at 50% 40%, #4b6dff 0%, #1a2a8a 55%, var(--angel-deep) 100%); }
+.char-btn.lucifer .char-icon.has-face { background: radial-gradient(circle at 50% 70%, #ff8a3a 0%, #a3140f 45%, var(--luci-deep) 100%); }
+.char-icon canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.char-btn .char-name {
+  margin-top: 6px; font-size: 20px; font-weight: 800; letter-spacing: 2px;
+  color: #fff6dc; text-shadow: 0 0 2px #000, 0 2px 0 #000, 0 0 10px rgba(255,210,120,.45);
+}
+.char-btn.angel .char-name   { text-shadow: 0 0 2px #000, 0 2px 0 #000, 0 0 12px rgba(120,150,255,.9); }
+.char-btn.lucifer .char-name { text-shadow: 0 0 2px #000, 0 2px 0 #000, 0 0 12px rgba(255,90,40,.9); }
+.char-btn .char-note { font-size: 13px; color: #e9dcc0; line-height: 1.45; text-shadow: 0 1px 2px #000; }
+
+/* ---------- ボタン ---------- */
 .main-btn, .sub-btn {
-  font-family: inherit; font-size: 22px; font-weight: bold; color: #fff; cursor: pointer;
-  padding: 10px 36px; border-radius: 999px; border: none;
+  --frame-shape: var(--pointed);
+  font-family: var(--serif-jp); font-weight: 800; letter-spacing: 4px; cursor: pointer;
+  padding: 11px 48px; color: #fff4d6; font-size: 22px;
+  text-shadow: 0 0 2px #000, 0 2px 0 #000;
+  transition: transform .1s ease, filter .2s ease;
 }
-.main-btn { background: linear-gradient(#ff7aa8, #d0306a); box-shadow: 0 4px 0 #801840; }
-.main-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #801840; }
-.sub-btn { background: rgba(255,255,255,.18); }
-.sub-btn.small { font-size: 14px; padding: 6px 18px; position: absolute; right: 14px; top: 12px; }
+.main-btn {
+  --frame-fill:
+    linear-gradient(180deg, rgba(255,255,255,.18) 0%, rgba(255,255,255,0) 45%),
+    linear-gradient(90deg, #1b2c9a 0%, #2a0e3c 50%, #9a1410 100%);
+  filter: drop-shadow(0 0 8px rgba(255,200,90,.45)) drop-shadow(0 4px 4px rgba(0,0,0,.6));
+}
+.main-btn:hover { filter: drop-shadow(0 0 12px rgba(255,210,110,.75)) drop-shadow(0 4px 4px rgba(0,0,0,.6)); }
+.main-btn:active, .sub-btn:active { transform: translateY(2px) scale(.98); }
+.sub-btn {
+  --frame-fill: linear-gradient(180deg, #2a1d2a 0%, #120a12 100%);
+  font-size: 19px; padding: 9px 38px;
+  filter: drop-shadow(0 3px 3px rgba(0,0,0,.6));
+}
+.main-btn span, .sub-btn span { position: relative; }
+.sub-btn.small {
+  --point: 10px; --bevel: 2px;
+  font-size: 13px; letter-spacing: 1px; padding: 6px 20px; position: absolute; right: 14px; top: 12px;
+}
 
-.controls-help { font-size: 14px; opacity: .85; text-align: center; line-height: 1.7; }
+.controls-help {
+  font-size: 13px; color: #e6d9bb; text-align: center; line-height: 1.7;
+  text-shadow: 0 1px 2px #000, 0 0 6px #000;
+}
+.controls-help b { color: var(--gold-1); font-weight: 800; }
 
-.result-text { font-size: 72px; text-shadow: 0 0 20px #fc6; }
-.result-text.lose { text-shadow: 0 0 20px #66f; color: #ccd; }
-.result-detail { font-size: 20px; }
-.result-buttons { display: flex; gap: 20px; margin-top: 10px; }
+/* ---------- 結果画面 ---------- */
+.result-panel {
+  --frame-shape: var(--chamfer); --cut: 26px; --bevel: 4px;
+  --frame-fill:
+    radial-gradient(ellipse at 50% 0%, rgba(255,210,120,.18) 0%, rgba(255,210,120,0) 60%),
+    linear-gradient(90deg, rgba(10,20,80,.94) 0%, rgba(14,8,22,.94) 50%, rgba(80,8,10,.94) 100%);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 26px 64px 30px; min-width: 520px;
+  filter: drop-shadow(0 0 14px rgba(255,200,90,.35)) drop-shadow(0 8px 12px rgba(0,0,0,.7));
+}
+#result-screen[data-char="angel"] .result-panel {
+  --frame-fill:
+    radial-gradient(1.2px 1.2px at 12% 20%, #fff 60%, transparent 100%),
+    radial-gradient(1px 1px at 84% 30%, #fff 60%, transparent 100%),
+    radial-gradient(1.2px 1.2px at 70% 80%, #dfe6ff 60%, transparent 100%),
+    radial-gradient(ellipse at 50% 0%, rgba(155,107,255,.4) 0%, rgba(155,107,255,0) 65%),
+    linear-gradient(170deg, rgba(19,48,138,.96) 0%, rgba(6,10,42,.96) 100%);
+}
+#result-screen[data-char="lucifer"] .result-panel {
+  --frame-fill:
+    radial-gradient(ellipse at 50% 120%, rgba(255,154,46,.7) 0%, rgba(226,54,28,.45) 30%, rgba(122,10,16,0) 65%),
+    linear-gradient(170deg, rgba(42,3,6,.96) 0%, rgba(18,2,4,.96) 100%);
+}
+.result-text {
+  font-family: var(--serif-jp); font-weight: 800; font-size: 76px; letter-spacing: 10px; line-height: 1.1;
+  background: linear-gradient(180deg, #fffbe6 0%, var(--gold-1) 35%, var(--gold-2) 62%, #fff0b8 80%, var(--gold-3) 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 1px var(--ink)) drop-shadow(0 0 1px var(--ink)) drop-shadow(0 3px 0 var(--gold-4)) drop-shadow(0 0 14px rgba(255,200,90,.6));
+}
+.result-text.lose {
+  background: linear-gradient(180deg, #f2f4ff 0%, #b9c2e0 40%, #6a7398 70%, #c9cfea 100%);
+  -webkit-background-clip: text; background-clip: text;
+  filter: drop-shadow(0 0 1px var(--ink)) drop-shadow(0 0 1px var(--ink)) drop-shadow(0 3px 0 #1a1d33) drop-shadow(0 0 14px rgba(110,120,255,.55));
+}
+.result-detail {
+  font-size: 19px; letter-spacing: 1px; color: #f1e4c4; text-shadow: 0 1px 2px #000;
+  padding: 4px 18px; border-top: 1px solid rgba(246,215,122,.55); border-bottom: 1px solid rgba(246,215,122,.55);
+}
+.result-buttons { display: flex; gap: 22px; margin-top: 8px; }
 
+/* ---------- 縦画面の案内 ---------- */
 #rotate-hint {
-  display: none; position: fixed; inset: 0; z-index: 100; background: #0a0820;
+  display: none; position: fixed; inset: 0; z-index: 100;
+  background: linear-gradient(90deg, #070c30, #0c0610 50%, #2a0408);
   flex-direction: column; align-items: center; justify-content: center; gap: 16px; font-size: 20px;
+  color: var(--gold-1); letter-spacing: 2px; text-shadow: 0 0 8px rgba(255,200,90,.5);
 }
 .rotate-icon { font-size: 64px; animation: rot 1.6s ease-in-out infinite; }
 @keyframes rot { 0%, 20% { transform: rotate(0); } 60%, 100% { transform: rotate(90deg); } }
 @media (orientation: portrait) and (pointer: coarse) {
   #rotate-hint { display: flex; }
 }
-

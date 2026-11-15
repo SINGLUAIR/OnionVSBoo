@@ -35,7 +35,7 @@
   // ------------------------------------------------------------
   const bgCanvas = document.createElement('canvas');
   bgCanvas.width = W; bgCanvas.height = H;
-  (function drawBackground() {
+  function drawBackground() {
     const b = bgCanvas.getContext('2d');
     const sky = b.createLinearGradient(0, 0, 0, H);
     sky.addColorStop(0, '#1a1040');
@@ -81,6 +81,37 @@
     for (let y = floorTop; y < H; y += 30) {
       b.beginPath(); b.moveTo(0, y); b.lineTo(W, y); b.stroke();
     }
+  }
+  drawBackground();
+
+  // 背景画像の差し込み口（assets/ui-config.js の background.far / background.floor）
+  // 画像が読み込めたら背景を描き直す。無いときは上の描画のまま。
+  (function loadBackgroundImages() {
+    const bg = (window.UI_CONFIG && window.UI_CONFIG.background) || {};
+    const imgs = { far: null, floor: null };
+    function rebuild() {
+      const b = bgCanvas.getContext('2d');
+      b.clearRect(0, 0, W, H);
+      if (imgs.far) {
+        const im = imgs.far;
+        const s = Math.max(W / im.naturalWidth, H / im.naturalHeight);
+        const dw = im.naturalWidth * s, dh = im.naturalHeight * s;
+        b.drawImage(im, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      } else {
+        drawBackground();
+      }
+      if (imgs.floor) {
+        const r = bg.floorRect || { x: 0, y: CFG.field.top - 30, w: W, h: H - (CFG.field.top - 30) };
+        b.drawImage(imgs.floor, r.x, r.y, r.w, r.h);
+      }
+    }
+    ['far', 'floor'].forEach((k) => {
+      if (!bg[k]) return;
+      const im = new Image();
+      im.onload = () => { imgs[k] = im; rebuild(); };
+      im.onerror = () => console.warn('背景画像を読み込めませんでした: ' + bg[k]);
+      im.src = bg[k];
+    });
   })();
 
   // ------------------------------------------------------------
@@ -597,6 +628,9 @@
       else if (w.player < w.enemy) { r = 'lose'; el.textContent = '敗北…'; }
       else { r = 'draw'; el.textContent = '引き分け'; }
       el.className = 'result-text' + (r === 'lose' ? ' lose' : '');
+      // 結果パネルの色：勝った側の陣営（引き分けはプレイヤー側）
+      const tintChar = r === 'lose' ? this.enemy.charId : this.player.charId;
+      document.getElementById('result-screen').dataset.char = tintChar;
       this.lastResult = r;
       const pName = ASSETS.characters[this.player.charId].name;
       const eName = ASSETS.characters[this.enemy.charId].name;
@@ -720,23 +754,7 @@
 
       // メッセージ（ラウンド開始・KO）
       if (this.message && now < this.message.until) {
-        c.save();
-        c.textAlign = 'center';
-        c.textBaseline = 'middle';
-        c.font = 'bold 72px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif';
-        c.lineWidth = 8;
-        c.strokeStyle = 'rgba(20,10,40,0.85)';
-        c.strokeText(this.message.text, W / 2, H / 2 - 30);
-        c.fillStyle = this.message.color;
-        c.fillText(this.message.text, W / 2, H / 2 - 30);
-        if (this.message.sub) {
-          c.font = 'bold 26px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif';
-          c.lineWidth = 5;
-          c.strokeText(this.message.sub, W / 2, H / 2 + 30);
-          c.fillStyle = '#fff';
-          c.fillText(this.message.sub, W / 2, H / 2 + 30);
-        }
-        c.restore();
+        drawBanner(c, this.message, now);
       }
 
       if (this.debug) {
@@ -754,57 +772,67 @@
     renderHud(c, now) {
       const drawSide = (f, left, label) => {
         const name = ASSETS.characters[f.charId].name;
-        const x0 = left ? 20 : W - 20;
+        const pw = 300, ph = 96;
+        const px = left ? 10 : W - 10 - pw;
+        drawPlate(c, px, 8, pw, ph, f.charId, left);
+        const x0 = left ? px + 22 : px + pw - 22;
         c.save();
         c.textAlign = left ? 'left' : 'right';
-        c.font = 'bold 18px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif';
-        c.fillStyle = '#fff';
-        c.strokeStyle = 'rgba(0,0,0,0.6)';
-        c.lineWidth = 4;
+        c.textBaseline = 'alphabetic';
+        // 名前
+        c.font = '800 17px ' + FONT_JP;
+        c.lineWidth = 4; c.lineJoin = 'round';
+        c.strokeStyle = 'rgba(10,4,6,0.9)';
+        c.fillStyle = '#fff4d6';
         const title = label + '：' + name;
-        c.strokeText(title, x0, 28);
-        c.fillText(title, x0, 28);
-        // ライフ（5つ）
+        c.strokeText(title, x0, 34);
+        c.fillText(title, x0, 34);
+        // ライフ（宝石）
         for (let i = 0; i < CFG.maxLife; i++) {
-          const cx = left ? x0 + 16 + i * 36 : x0 - 16 - i * 36;
-          drawHeart(c, cx, 54, 14, i < f.life, f.charId);
+          const cx = left ? x0 + 12 + i * 34 : x0 - 12 - i * 34;
+          drawGem(c, cx, 56, 12, i < f.life, f.charId, now);
         }
-        // 勝利ラウンド数
+        // 勝利ラウンド数（星）
         for (let i = 0; i < this.winsNeeded(); i++) {
-          const cx = left ? x0 + 10 + i * 22 : x0 - 10 - i * 22;
+          const cx = left ? x0 + 8 + i * 22 : x0 - 8 - i * 22;
           const won = i < (left ? this.wins.player : this.wins.enemy);
-          c.beginPath();
-          c.arc(cx, 86, 7, 0, Math.PI * 2);
-          c.fillStyle = won ? '#ffd84a' : 'rgba(255,255,255,0.15)';
-          c.fill();
-          c.strokeStyle = 'rgba(255,255,255,0.6)';
-          c.lineWidth = 1.5;
-          c.stroke();
+          drawStar(c, cx, 84, 8, won);
         }
         if (f.buff) {
-          c.font = 'bold 15px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif';
-          c.fillStyle = f.charId === 'angel' ? '#ffe680' : '#d090ff';
-          const tx = left ? x0 + 70 : x0 - 70;
-          c.strokeText('速度アップ中！', tx, 91);
-          c.fillText('速度アップ中！', tx, 91);
+          c.font = '800 14px ' + FONT_JP;
+          const tx = left ? x0 + 60 : x0 - 60;
+          const pulse = 0.65 + 0.35 * Math.sin(now * 0.012);
+          c.shadowColor = f.charId === 'angel' ? 'rgba(130,160,255,' + pulse + ')' : 'rgba(255,120,40,' + pulse + ')';
+          c.shadowBlur = 10;
+          c.lineWidth = 3;
+          c.strokeText('速度アップ中！', tx, 89);
+          c.fillStyle = f.charId === 'angel' ? '#cfe0ff' : '#ffcf8a';
+          c.fillText('速度アップ中！', tx, 89);
         }
         c.restore();
       };
       drawSide(this.player, true, 'あなた');
       drawSide(this.enemy, false, 'あいて');
 
+      // ラウンド表示（中央の尖ったプレート）
+      const rt = this.round > CFG.rounds ? '決着ラウンド' : 'ラウンド ' + this.round + ' / ' + CFG.rounds;
+      drawPointedPlate(c, W / 2 - 96, 12, 192, 36);
       c.save();
       c.textAlign = 'center';
-      c.fillStyle = '#fff';
-      c.strokeStyle = 'rgba(0,0,0,0.6)';
-      c.lineWidth = 4;
-      c.font = 'bold 20px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif';
-      const rt = this.round > CFG.rounds ? '決着ラウンド' : 'ラウンド ' + this.round + ' / ' + CFG.rounds;
-      c.strokeText(rt, W / 2, 30); c.fillText(rt, W / 2, 30);
+      c.textBaseline = 'middle';
+      c.font = '800 18px ' + FONT_JP;
+      c.lineWidth = 4; c.lineJoin = 'round';
+      c.strokeStyle = 'rgba(10,4,6,0.9)';
+      c.strokeText(rt, W / 2, 31);
+      c.fillStyle = goldFill(c, 20, 42);
+      c.fillText(rt, W / 2, 31);
       if (CFG.roundTimeLimit > 0) {
-        c.font = 'bold 34px sans-serif';
+        c.font = '700 32px ' + FONT_EN;
         const tt = String(Math.ceil(this.roundTimeLeft));
-        c.strokeText(tt, W / 2, 68); c.fillText(tt, W / 2, 68);
+        c.lineWidth = 5;
+        c.strokeText(tt, W / 2, 72);
+        c.fillStyle = goldFill(c, 56, 88);
+        c.fillText(tt, W / 2, 72);
       }
       c.restore();
     }
@@ -917,24 +945,231 @@
     });
   }
 
-  function drawHeart(c, x, y, r, filled, charId) {
+  // ------------------------------------------------------------
+  // UI 描画（堕天使・悪魔・高貴：金のベベル縁＋尖った角）
+  // ------------------------------------------------------------
+  const FONT_JP = '"Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif';
+  const FONT_EN = '"Cinzel", "Times New Roman", serif';
+  const SIDE = {
+    angel:   { deep: '#060a2a', mid: '#13308a', hi: '#3f6cff', glow: 'rgba(155,107,255,', gem: ['#e8eeff', '#6f93ff', '#1b2f9a', '#070d3a'] },
+    lucifer: { deep: '#120204', mid: '#7a0a10', hi: '#e2361c', glow: 'rgba(255,154,46,',  gem: ['#fff0c8', '#ff6a2a', '#a3140f', '#2a0306'] }
+  };
+
+  function goldFill(c, y0, y1) {
+    const g = c.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, '#fff4c8');
+    g.addColorStop(0.25, '#f6d77a');
+    g.addColorStop(0.5, '#d9a83e');
+    g.addColorStop(0.72, '#9a6a1c');
+    g.addColorStop(0.88, '#f6d77a');
+    g.addColorStop(1, '#4a2c08');
+    return g;
+  }
+
+  // 角を斜めに落とした形（片側だけトゲのように尖らせる：spikeSide = 'left' | 'right' | null）
+  function chamferPath(c, x, y, w, h, k, spikeSide) {
+    c.beginPath();
+    c.moveTo(x + k, y);
+    c.lineTo(x + w - k, y);
+    if (spikeSide === 'right') { c.lineTo(x + w + k * 0.9, y + h * 0.32); c.lineTo(x + w, y + k); }
+    else c.lineTo(x + w, y + k);
+    c.lineTo(x + w, y + h - k);
+    c.lineTo(x + w - k, y + h);
+    c.lineTo(x + k, y + h);
+    c.lineTo(x, y + h - k);
+    if (spikeSide === 'left') { c.lineTo(x, y + k); c.lineTo(x - k * 0.9, y + h * 0.32); }
+    c.lineTo(x, y + k);
+    c.closePath();
+  }
+
+  // 金縁プレート（HUD 用）。陣営の色で塗る
+  function drawPlate(c, x, y, w, h, charId, left) {
+    const s = SIDE[charId] || SIDE.angel;
+    const k = 14;
+    const spike = null; // 'left' | 'right' にすると片側の角がトゲ状に尖ります
+    c.save();
+    // 金のベベル
+    chamferPath(c, x, y, w, h, k, spike);
+    c.fillStyle = goldFill(c, y, y + h);
+    c.shadowColor = 'rgba(0,0,0,0.55)'; c.shadowBlur = 8; c.shadowOffsetY = 3;
+    c.fill();
+    c.shadowColor = 'transparent';
+    // 内側の細い黒線
+    chamferPath(c, x + 3, y + 3, w - 6, h - 6, k - 2, spike);
+    c.fillStyle = '#12070a';
+    c.fill();
+    // 塗り
+    chamferPath(c, x + 4.5, y + 4.5, w - 9, h - 9, k - 3, spike);
+    c.save();
+    c.clip();
+    const g = c.createLinearGradient(x, y, left ? x + w : x, y + h);
+    if (charId === 'lucifer') {
+      g.addColorStop(0, 'rgba(42,3,6,0.92)'); g.addColorStop(1, 'rgba(18,2,4,0.92)');
+    } else {
+      g.addColorStop(0, 'rgba(19,48,138,0.92)'); g.addColorStop(1, 'rgba(6,10,42,0.92)');
+    }
+    c.fillStyle = g;
+    c.fillRect(x, y, w, h);
+    if (charId === 'lucifer') {
+      // 下から立ちのぼる炎の光
+      const fl = c.createRadialGradient(x + w / 2, y + h * 1.25, 4, x + w / 2, y + h * 1.25, w * 0.6);
+      fl.addColorStop(0, 'rgba(255,170,60,0.75)');
+      fl.addColorStop(0.4, 'rgba(226,54,28,0.45)');
+      fl.addColorStop(1, 'rgba(122,10,16,0)');
+      c.fillStyle = fl; c.fillRect(x, y, w, h);
+    } else {
+      // 紫の光と星
+      const gl = c.createRadialGradient(x + w * 0.5, y + h * 0.2, 4, x + w * 0.5, y + h * 0.2, w * 0.55);
+      gl.addColorStop(0, 'rgba(155,107,255,0.45)');
+      gl.addColorStop(1, 'rgba(155,107,255,0)');
+      c.fillStyle = gl; c.fillRect(x, y, w, h);
+      c.fillStyle = 'rgba(255,255,255,0.85)';
+      for (let i = 0; i < 18; i++) {
+        const sx = x + ((i * 97.3) % w), sy = y + ((i * 53.7) % h);
+        c.fillRect(sx, sy, i % 4 === 0 ? 1.6 : 1, i % 4 === 0 ? 1.6 : 1);
+      }
+    }
+    c.restore();
+    c.restore();
+  }
+
+  // 両端が尖ったプレート（中央のラウンド表示）
+  function drawPointedPlate(c, x, y, w, h) {
+    const k = h / 2;
+    const path = (ix, iy, iw, ih, ik) => {
+      c.beginPath();
+      c.moveTo(ix + ik, iy); c.lineTo(ix + iw - ik, iy); c.lineTo(ix + iw, iy + ih / 2);
+      c.lineTo(ix + iw - ik, iy + ih); c.lineTo(ix + ik, iy + ih); c.lineTo(ix, iy + ih / 2);
+      c.closePath();
+    };
+    c.save();
+    path(x, y, w, h, k);
+    c.fillStyle = goldFill(c, y, y + h);
+    c.shadowColor = 'rgba(0,0,0,0.55)'; c.shadowBlur = 8; c.shadowOffsetY = 3;
+    c.fill();
+    c.shadowColor = 'transparent';
+    path(x + 3, y + 3, w - 6, h - 6, k - 3);
+    c.fillStyle = '#12070a'; c.fill();
+    path(x + 4.5, y + 4.5, w - 9, h - 9, k - 4.5);
+    const g = c.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, '#13308a'); g.addColorStop(0.5, '#1a0a1e'); g.addColorStop(1, '#7a0a10');
+    c.fillStyle = g; c.fill();
+    c.restore();
+  }
+
+  // ライフの宝石（ひし形）。満タン = 陣営色に光る、空 = 暗い穴
+  function drawGem(c, x, y, r, filled, charId, now) {
+    const s = SIDE[charId] || SIDE.angel;
+    c.save();
+    c.translate(x, y);
+    const dia = (rr, ry) => {
+      c.beginPath();
+      c.moveTo(0, -ry); c.lineTo(rr, 0); c.lineTo(0, ry); c.lineTo(-rr, 0); c.closePath();
+    };
+    // 金の台座
+    dia(r * 0.95, r * 1.25);
+    c.fillStyle = goldFill(c, -r * 1.25, r * 1.25);
+    c.fill();
+    c.lineWidth = 1; c.strokeStyle = '#12070a'; c.stroke();
+    dia(r * 0.68, r * 0.95);
+    if (filled) {
+      const g = c.createLinearGradient(-r, -r, r, r);
+      g.addColorStop(0, s.gem[0]); g.addColorStop(0.35, s.gem[1]); g.addColorStop(0.7, s.gem[2]); g.addColorStop(1, s.gem[3]);
+      c.fillStyle = g;
+      c.shadowColor = s.glow + '0.9)'; c.shadowBlur = 8;
+      c.fill();
+      c.shadowBlur = 0;
+      // ハイライト
+      c.beginPath();
+      c.moveTo(0, -r * 0.8); c.lineTo(r * 0.3, -r * 0.2); c.lineTo(0, -r * 0.05); c.lineTo(-r * 0.3, -r * 0.2); c.closePath();
+      c.fillStyle = 'rgba(255,255,255,0.55)';
+      c.fill();
+    } else {
+      c.fillStyle = '#0c0608';
+      c.fill();
+      c.strokeStyle = 'rgba(255,255,255,0.08)'; c.lineWidth = 1; c.stroke();
+    }
+    c.restore();
+  }
+
+  // 勝ちラウンドの星（4方向に尖った星）
+  function drawStar(c, x, y, r, filled) {
     c.save();
     c.translate(x, y);
     c.beginPath();
-    c.moveTo(0, r * 0.9);
-    c.bezierCurveTo(-r * 1.4, -r * 0.1, -r * 0.7, -r * 1.1, 0, -r * 0.35);
-    c.bezierCurveTo(r * 0.7, -r * 1.1, r * 1.4, -r * 0.1, 0, r * 0.9);
+    for (let i = 0; i < 8; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 4;
+      const rr = i % 2 === 0 ? r : r * 0.38;
+      c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+    }
     c.closePath();
     if (filled) {
-      c.fillStyle = charId === 'angel' ? '#ff6f9a' : '#b04cff';
-      c.fill();
+      c.fillStyle = goldFill(c, -r, r);
+      c.shadowColor = 'rgba(255,210,110,0.9)'; c.shadowBlur = 8;
     } else {
-      c.fillStyle = 'rgba(0,0,0,0.35)';
-      c.fill();
+      c.fillStyle = 'rgba(20,10,14,0.85)';
     }
-    c.strokeStyle = 'rgba(255,255,255,0.85)';
-    c.lineWidth = 2;
+    c.fill();
+    c.shadowBlur = 0;
+    c.lineWidth = 1.2;
+    c.strokeStyle = filled ? '#4a2c08' : 'rgba(246,215,122,0.55)';
     c.stroke();
+    c.restore();
+  }
+
+  // ラウンド開始・ファイト・KO の帯
+  function drawBanner(c, msg, now) {
+    const cy = H / 2 - 18;
+    const bandH = msg.sub ? 128 : 100;
+    c.save();
+    // 暗い帯（左右に向かって消える）
+    const band = c.createLinearGradient(0, 0, W, 0);
+    band.addColorStop(0, 'rgba(8,16,70,0)');
+    band.addColorStop(0.18, 'rgba(8,16,70,0.78)');
+    band.addColorStop(0.5, 'rgba(12,6,16,0.85)');
+    band.addColorStop(0.82, 'rgba(80,8,10,0.78)');
+    band.addColorStop(1, 'rgba(80,8,10,0)');
+    c.fillStyle = band;
+    c.fillRect(0, cy - bandH / 2, W, bandH);
+    // 金の細線（上下）＋中央のひし形
+    const line = c.createLinearGradient(0, 0, W, 0);
+    line.addColorStop(0, 'rgba(246,215,122,0)');
+    line.addColorStop(0.2, 'rgba(246,215,122,0.95)');
+    line.addColorStop(0.8, 'rgba(246,215,122,0.95)');
+    line.addColorStop(1, 'rgba(246,215,122,0)');
+    c.fillStyle = line;
+    [cy - bandH / 2, cy + bandH / 2 - 2].forEach((ly) => {
+      c.fillRect(0, ly, W, 2);
+      c.beginPath();
+      c.moveTo(W / 2, ly - 6); c.lineTo(W / 2 + 9, ly + 1); c.lineTo(W / 2, ly + 8); c.lineTo(W / 2 - 9, ly + 1); c.closePath();
+      c.fillStyle = goldFill(c, ly - 6, ly + 8); c.fill();
+      c.fillStyle = line;
+    });
+    // 文字
+    const ty = msg.sub ? cy - 14 : cy;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.font = '800 68px ' + FONT_JP;
+    c.lineJoin = 'round';
+    c.lineWidth = 9;
+    c.strokeStyle = 'rgba(14,6,8,0.95)';
+    c.strokeText(msg.text, W / 2, ty);
+    c.shadowColor = msg.color === '#ff7aa8' ? 'rgba(255,90,40,0.9)' : 'rgba(255,200,90,0.85)';
+    c.shadowBlur = 18;
+    c.fillStyle = goldFill(c, ty - 34, ty + 34);
+    c.fillText(msg.text, W / 2, ty);
+    c.shadowBlur = 0;
+    c.lineWidth = 1.2;
+    c.strokeStyle = 'rgba(255,248,220,0.6)';
+    c.strokeText(msg.text, W / 2, ty);
+    if (msg.sub) {
+      c.font = '800 22px ' + FONT_JP;
+      c.lineWidth = 5;
+      c.strokeStyle = 'rgba(14,6,8,0.95)';
+      c.strokeText(msg.sub, W / 2, cy + 40);
+      c.fillStyle = '#f6ecd6';
+      c.fillText(msg.sub, W / 2, cy + 40);
+    }
     c.restore();
   }
 
