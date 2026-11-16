@@ -190,21 +190,22 @@ window.ASSET_CONFIG = {
         head:  { src: 'assets/sprites/lucifer/parts/head.png',  pivot: { x: 156, y: 149 }, offset: 'auto', scale: 0.5, angle: 0, variants: { hurt: 'assets/sprites/lucifer/parts/head_hurt.png', attack: 'assets/sprites/lucifer/parts/head_attack.png', win: 'assets/sprites/lucifer/parts/head_win.png' } },
         arm:   { src: 'assets/sprites/lucifer/parts/arm.png',   pivot: { x: 173, y: 184 }, offset: 'auto', scale: 0.5, angle: 0, restAngle: 34.4 }
       },
-      // 倒れたあとのパーツ（おすすめ：4枚とも 420×260px、下端中央が床）
+      // 倒れたあとのパーツ（400×400px のキャンバス全体で書き出し。倒れる APNG と同じキャンバスで、下端中央が床）
+      // 体と頭は描いた位置のまま重なるよう、ピボットも同じキャンバス上の座標で指定。腕・翼はこのポーズでは無し
       downLoop: {
         mode: 'parts',
         // src: 'assets/sprites/lucifer/down/loop.png',
-        canvasAnchor: { x: 210, y: 260 },
+        canvasAnchor: { x: 200, y: 400 },
         order: ['wings', 'body', 'head', 'arm'],
-        breathAmp: 0.02,
+        breathAmp: 0.05,      // 体（マント）の呼吸の拡縮幅（±5%）。体の下端を軸に上へ膨らむ
         breathPeriod: 2000,
         wings: {
           src: 'assets/sprites/lucifer/down/wings.png', pivot: { x: 145, y: 170 }, offset: 'auto', scale: 0.5, angle: 0,
           mirror: true,
           mirrorAxisX: 210
         },
-        body:  { src: 'assets/sprites/lucifer/down/body.png',  pivot: { x: 210, y: 260 }, offset: 'auto', scale: 0.5, angle: 0 },
-        head:  { src: 'assets/sprites/lucifer/down/head.png',  pivot: { x: 210, y: 115 }, offset: 'auto', scale: 0.5, angle: 0 },
+        body:  { src: 'assets/sprites/lucifer/down/body.png',  pivot: { x: 180, y: 293 }, offset: 'auto', scale: 0.5, angle: 0 }, // ピボット = 体（マント）の下端。ここを軸に呼吸
+        head:  { src: 'assets/sprites/lucifer/down/head.png',  pivot: { x: 206, y: 364 }, offset: 'auto', scale: 0.5, angle: 0 }, // 頭は床の上で静止
         arm:   { src: 'assets/sprites/lucifer/down/arm.png',   pivot: { x: 295, y: 215 }, offset: 'auto', scale: 0.5, angle: 0 }
       },
       states: {
