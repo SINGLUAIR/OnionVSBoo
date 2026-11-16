@@ -102,7 +102,7 @@ window.ASSET_CONFIG = {
 
   characters: {
     angel: {
-      name: '天使',
+      name: '熾天使ルシファー',
       mode: 'parts',
       // 画面上のキャラの大きさ（px, 960x540 基準）。当たり判定や倒れる APNG（scale: null のとき）の基準になります。
       width: 140,

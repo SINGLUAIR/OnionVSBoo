@@ -796,7 +796,7 @@
       if (winner) this.wins[winner]++;
       if (winner === 'player') this.player.setState('win');
       else if (winner === 'enemy') this.enemy.setState('win');
-      this.message = { text: text, sub: winner ? (winner === 'player' ? 'あなたがこのラウンドを取った！' : '相手がこのラウンドを取った…') : '引き分け', until: this.time + CFG.koPauseMs, color: '#ffd84a' };
+      this.message = { text: text, sub: '', until: this.time + CFG.koPauseMs, color: '#ffd84a' };
     },
 
     afterRound() {
@@ -851,8 +851,8 @@
 
       if (this.phase === 'intro') {
         const t = now - this.phaseStart;
-        if (t >= CFG.roundIntroMs * 0.6 && this.message && this.message.text !== 'ファイト！') {
-          this.message = { text: 'ファイト！', sub: '', until: now + CFG.roundIntroMs * 0.4 + 300, color: '#ff7aa8' };
+        if (t >= CFG.roundIntroMs * 0.6 && this.message && this.message.text !== 'FIGHT!') {
+          this.message = { text: 'FIGHT!', sub: '', until: now + CFG.roundIntroMs * 0.4 + 300, color: '#ffd84a' };
         }
         if (t >= CFG.roundIntroMs) { this.phase = 'fight'; window.Input.clear(); }
       }
@@ -972,12 +972,18 @@
         c.save();
         c.textAlign = left ? 'left' : 'right';
         c.textBaseline = 'alphabetic';
-        // 名前
-        c.font = '800 17px ' + FONT_JP;
+        // 名前（長い表示名はプレートに収まるまで少し小さくする）
+        const title = label + '：' + name;
+        let nameSize = 17;
+        c.font = '800 ' + nameSize + 'px ' + FONT_JP;
+        const nameMax = pw - 44;
+        while (nameSize > 13 && c.measureText(title).width > nameMax) {
+          nameSize--;
+          c.font = '800 ' + nameSize + 'px ' + FONT_JP;
+        }
         c.lineWidth = 4; c.lineJoin = 'round';
         c.strokeStyle = 'rgba(10,4,6,0.9)';
         c.fillStyle = '#fff4d6';
-        const title = label + '：' + name;
         c.strokeText(title, x0, 34);
         c.fillText(title, x0, 34);
         // ライフ（宝石）
@@ -1351,23 +1357,21 @@
       c.fillStyle = goldFill(c, ly - 6, ly + 8); c.fill();
       c.fillStyle = line;
     });
-    // 文字
+    // 文字（無地の金＋輪郭＋弱い影。文字の上にグラデや炎の模様は乗せない）
     const ty = msg.sub ? cy - 14 : cy;
+    const isEn = /^[A-Z0-9!?.]+$/i.test(msg.text);
     c.textAlign = 'center';
     c.textBaseline = 'middle';
-    c.font = '800 68px ' + FONT_JP;
+    c.font = (isEn ? '900 72px ' : '800 68px ') + (isEn ? FONT_EN : FONT_JP);
     c.lineJoin = 'round';
-    c.lineWidth = 9;
+    c.lineWidth = 10;
     c.strokeStyle = 'rgba(14,6,8,0.95)';
     c.strokeText(msg.text, W / 2, ty);
-    c.shadowColor = msg.color === '#ff7aa8' ? 'rgba(255,90,40,0.9)' : 'rgba(255,200,90,0.85)';
-    c.shadowBlur = 18;
-    c.fillStyle = goldFill(c, ty - 34, ty + 34);
+    c.shadowColor = 'rgba(255,210,110,0.55)';
+    c.shadowBlur = 8;
+    c.fillStyle = '#ffe4a0';
     c.fillText(msg.text, W / 2, ty);
     c.shadowBlur = 0;
-    c.lineWidth = 1.2;
-    c.strokeStyle = 'rgba(255,248,220,0.6)';
-    c.strokeText(msg.text, W / 2, ty);
     if (msg.sub) {
       c.font = '800 22px ' + FONT_JP;
       c.lineWidth = 5;
