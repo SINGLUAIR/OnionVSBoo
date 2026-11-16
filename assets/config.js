@@ -218,7 +218,8 @@ window.ASSET_CONFIG = {
         down:     {
           type: 'apng',
           src: 'assets/sprites/lucifer/down.png',
-          duration: 900, loop: false, scale: 0.5, offsetX: 0, offsetY: 0, fadeOut: false
+          duration: 900, loop: false, scale: 0.5, offsetX: 0, offsetY: 0, fadeOut: false,
+          sinkY: 18, sinkFrom: 0.6 // 倒れる途中（60%〜最後）で絵を少しずつ18px下げ、倒れたポーズを床に接地させる（倒れ続けも同じだけ下がる）
           // , frames: ['assets/sprites/lucifer/down_1.png', 'assets/sprites/lucifer/down_2.png', 'assets/sprites/lucifer/down_3.png', 'assets/sprites/lucifer/down_4.png', 'assets/sprites/lucifer/down_5.png'], frameMs: 100
         }
       }

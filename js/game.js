@@ -1031,12 +1031,24 @@
     }
   };
 
-  function drawFallFrame(c, frame, sc, w, h, debug) {
+  // 倒れる途中で絵を少しずつ下げる量（画面上の px）。states.down.sinkY / sinkFrom
+  //  progress < sinkFrom のあいだは 0、そこから最後（progress = 1）までに sinkY まで、なめらかに下げる
+  function downSink(f, progress) {
+    const sc = (f.def.states && f.def.states.down) || {};
+    const y = sc.sinkY || 0;
+    if (!y) return 0;
+    const from = sc.sinkFrom != null ? Math.max(0, Math.min(0.99, sc.sinkFrom)) : 0.3;
+    const t = Math.max(0, Math.min(1, (progress - from) / (1 - from)));
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; // easeInOut
+    return y * e;
+  }
+
+  function drawFallFrame(c, frame, sc, w, h, debug, sink) {
     if (!frame) return false;
     const fw = frame.naturalWidth || frame.width, fh = frame.naturalHeight || frame.height;
     const dw = sc.scale ? fw * sc.scale : w;
     const dh = sc.scale ? fh * sc.scale : h;
-    const dx = -dw / 2 + (sc.offsetX || 0), dy = -dh + (sc.offsetY || 0);
+    const dx = -dw / 2 + (sc.offsetX || 0), dy = -dh + (sc.offsetY || 0) + (sink || 0);
     c.drawImage(frame, dx, dy, dw, dh);
     if (debug) {
       c.strokeStyle = 'rgba(255,255,255,0.6)';
@@ -1060,7 +1072,7 @@
       if (f.facing === -1) c.scale(-1, 1);
       const seq = kind === 'frames' ? window.SpriteBank.getDownFrames(f.charId) : window.SpriteBank.get(f.charId, 'down');
       const frame = seq.frameAt(f.stateTime, dur, false);
-      drawFallFrame(c, frame, sc, w, h, debug);
+      drawFallFrame(c, frame, sc, w, h, debug, downSink(f, progress)); // 影は床のまま、絵だけ下げる
       return;
     }
     if (f.facing === -1) c.scale(-1, 1);
@@ -1081,7 +1093,7 @@
       const single = window.SpriteBank.getDownLoopSingle(f.charId);
       if (f.facing === -1) c.scale(-1, 1);
       window.drawDownLoopSingle(c, single.img, dl, now, w, h, {
-        debug: debug, flipped: f.facing === -1, stateTime: f.stateTime
+        debug: debug, flipped: f.facing === -1, stateTime: f.stateTime, sinkY: downSink(f, 1)
       });
       return;
     }
@@ -1094,7 +1106,8 @@
         partsConfig: dl,
         debug: debug,
         flipped: f.facing === -1,
-        stateTime: f.stateTime
+        stateTime: f.stateTime,
+        sinkY: downSink(f, 1)   // 倒れる瞬間の最後と同じだけ下げる（切り替わりでずれない）
       });
       return;
     }
@@ -1103,7 +1116,7 @@
       const sc = f.def.states.down || {};
       drawShadow(c, w);
       if (f.facing === -1) c.scale(-1, 1);
-      drawFallFrame(c, last, sc, w, h, debug);
+      drawFallFrame(c, last, sc, w, h, debug, downSink(f, 1));
       return;
     }
     if (f.facing === -1) c.scale(-1, 1);

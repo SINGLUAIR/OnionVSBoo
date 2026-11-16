@@ -561,7 +561,8 @@
     ctx.fill();
 
     ctx.globalAlpha = baseAlpha * Math.max(0.15, alpha);
-    const floatY = (state === 'downLoop') ? 0 : (-M.floatHeight + bob); // 浮遊（倒れ続けは床に寝ているので浮かせない）
+    // 浮遊（倒れ続けは床に寝ているので浮かせない。states.down.sinkY の分だけ下げる。影は動かさない）
+    const floatY = (state === 'downLoop') ? (opts.sinkY || 0) : (-M.floatHeight + bob);
     ctx.translate(0, floatY);
     if (state === 'down') {
       // 倒れる APNG／コマ送りが無いときだけ使われる（仮の図形の倒れ方）
@@ -941,7 +942,7 @@
     ctx.beginPath();
     ctx.ellipse(0, 0, w * 0.32, 10, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.translate(ox, oy);
+    ctx.translate(ox, oy + (opts.sinkY || 0)); // 影は床のまま、絵だけ sinkY 下げる
     ctx.scale(scale, scale * breath);
     ctx.drawImage(img, -an.x, -an.y);
     ctx.restore();
@@ -949,7 +950,7 @@
     if (opts.debug) {
       ctx.save();
       ctx.globalAlpha = 1;
-      ctx.translate(ox, oy);
+      ctx.translate(ox, oy + (opts.sinkY || 0));
       const dw = img.naturalWidth * scale, dh = img.naturalHeight * scale * breath;
       ctx.strokeStyle = '#fc4';
       ctx.setLineDash([3, 3]);
