@@ -145,6 +145,9 @@
       this.attackFlashUntil = 0;
       this.lastAttackRect = null;
       this.knock = 0;
+      this.recoverLeft = 0;   // 空振り硬直の残り時間（ミリ秒）
+      this.recoverTotal = 0;
+      this.attackSerial = 0;  // 攻撃を出すたびに増える番号（AI が「この攻撃」を区別するため）
     }
 
     get buff() {
@@ -203,7 +206,8 @@
       return this.facing !== base;
     }
 
-    canAct() { return this.state === 'idle' || this.state === 'move'; }
+    canAct() { return (this.state === 'idle' || this.state === 'move') && !(this.recoverLeft > 0); }
+    isRecovering() { return this.recoverLeft > 0; }
 
     update(dt, now, move, wantAttack, opp, game) {
       this.stateTime += dt;
@@ -230,11 +234,23 @@
       if (this.state === 'attack') {
         // アニメーションの最後に攻撃判定を出す
         if (this.stateTime >= this.duration('attack')) {
-          game.resolveAttack(this, opp);
-          this.cooldownUntil = now + CFG.attackCooldown / this.attackMult;
+          const mult = this.attackStartMult || this.attackMult;
+          const hit = game.resolveAttack(this, opp);
+          // 空振りなら硬直（移動・攻撃不可）。待ち時間は硬直が終わってから数える。プレイヤー・NPC 共通
+          const recover = hit ? 0 : (CFG.whiffRecoveryMs || 0) / mult;
+          this.recoverLeft = this.recoverTotal = recover;
+          this.cooldownUntil = now + recover + CFG.attackCooldown / this.attackMult;
           // KO で勝利ポーズに入っていたら上書きしない
           if (this.state === 'attack') this.setState('idle');
         }
+        return;
+      }
+
+      // 空振り硬直中：その場で止まる
+      if (this.recoverLeft > 0) {
+        this.recoverLeft -= dt;
+        if (this.recoverLeft < 0) this.recoverLeft = 0;
+        this.setState('idle');
         return;
       }
 
@@ -242,10 +258,11 @@
       if (!game.fighting) { move = { x: 0, y: 0 }; wantAttack = false; }
       if (wantAttack && now >= this.cooldownUntil) {
         this.faceOpponent(opp);
+        this.attackSerial++;
         this.setState('attack');
         return;
       }
-      const speedScale = this.isPlayer ? 1 : CFG.ai.speedScale;
+      const speedScale = this.isPlayer ? 1 : (CFG.ai.speedScale == null ? 1 : CFG.ai.speedScale);
       const sx = CFG.moveSpeedX * this.moveMult * speedScale;
       const sy = CFG.moveSpeedY * this.moveMult * speedScale;
       if (move.x || move.y) {
@@ -265,15 +282,33 @@
       if (Math.abs(dx) > 4) this.facing = dx > 0 ? 1 : -1;
     }
 
-    takeHit(fromFacing, now) {
+    takeHit(attacker, now) {
       this.life = Math.max(0, this.life - 1);
-      this.knock = fromFacing * CFG.knockback;
+      this.recoverLeft = 0;
+      this.applyKnockback(attacker);
       if (this.life <= 0) {
         this.setState('down');
       } else {
         this.setState('hurt');
         this.invulnUntil = now + CFG.invulnerableMs;
       }
+    }
+
+    // ノックバック：攻撃した側の攻撃が届く範囲の外まで押し出す（連続ヒット防止）。
+    // 壁で押し出しきれない分は、攻撃した側を押し戻す
+    applyKnockback(attacker) {
+      const dir = attacker.facing;
+      const a = attacker.def.attackBox;
+      const half = this.bodyRect().w / 2;
+      // 押し出したい位置：相手の判定の先端 + 自分の体の半分 + 余白
+      const targetX = attacker.x + dir * (a.near + a.reach + half + (CFG.knockbackReachMargin || 0));
+      const push = Math.max(CFG.knockback, (targetX - this.x) * dir);
+      const room = Math.max(0, dir > 0 ? CFG.field.right - this.x : this.x - CFG.field.left);
+      const own = Math.min(push, room);
+      this.knock = dir * own;
+      const short = push - own;
+      const ratio = CFG.wallPushbackRatio == null ? 1 : CFG.wallPushbackRatio;
+      if (short > 0.5 && ratio > 0) attacker.knock = -dir * short * ratio;
     }
 
     draw(c, now, debug) {
@@ -288,6 +323,12 @@
       c.translate(this.x, this.y);
       // 無敵中は点滅
       if (now < this.invulnUntil && this.state !== 'hurt' && Math.floor(now / 80) % 2 === 0) c.globalAlpha = 0.45;
+      // 空振り硬直中は前へつんのめる（足元を軸に傾ける）
+      if (this.recoverLeft > 0 && CFG.whiffLeanDeg && this.recoverTotal > 0) {
+        const k = this.recoverLeft / this.recoverTotal;           // 1 → 0
+        const ease = Math.sin(Math.min(1, k * 1.3) * Math.PI / 2); // すぐ傾いて、最後に戻る
+        c.rotate(this.facing * CFG.whiffLeanDeg * ease * Math.PI / 180);
+      }
 
       if (this.state === 'downLoop') {
         drawDownLoopFighter(c, this, now, debug);
@@ -373,27 +414,43 @@
   class AI {
     constructor(me, opp) {
       this.me = me; this.opp = opp;
-      this.nextThink = 0;
-      this.move = { x: 0, y: 0 };
-      this.retreatUntil = 0;
-      this.attackAt = 0;
-      this.cooldownUntil = 0;
-      this.dodgeUntil = 0;
-      this.dodgeDir = 1;
+      this.reset(0);
     }
 
     reset(now) {
       this.nextThink = now + 300;
       this.move = { x: 0, y: 0 };
-      this.retreatUntil = 0;
-      this.attackAt = 0;
-      this.cooldownUntil = now + 500;
-      this.dodgeUntil = 0;
+      this.attackAt = 0;          // 自分から攻撃する予定時刻（反応の遅れ付き）
+      this.mode = 'space';        // space（間合い取り）/ engage（踏み込み）/ punish（隙を突く）/ evade（下がる・かわす）/ sidestep（回り込み）
+      this.modeUntil = 0;
+      this.feintUntil = 0;
+      this.dodgeDir = 1;
+      this.seenSerial = 0;        // 反撃・回避の判断を済ませたプレイヤーの攻撃番号
+      this.evadeSerial = 0;
+      this.punishAt = 0;
+      this.startAt = now + 500;   // ラウンド開始直後の待ち
     }
+
+    // 相手の体の前端までの距離（x）。
+    gapX() { return Math.abs(this.opp.x - this.me.x); }
+
+    // 自分の攻撃が当たる最大の横距離（中心同士）
+    myReach() {
+      const a = this.me.def.attackBox;
+      return a.near + a.reach + this.opp.bodyRect().w / 2;
+    }
+
+    // プレイヤーの攻撃が自分に届く最大の横距離（中心同士）
+    oppReach() {
+      const a = this.opp.def.attackBox;
+      return a.near + a.reach + this.me.bodyRect().w / 2;
+    }
+
+    depthAligned(k) { return Math.abs(this.opp.y - this.me.y) <= CFG.depthTolerance * (k || 0.75); }
 
     inRange() {
       const me = this.me, opp = this.opp;
-      if (Math.abs(opp.y - me.y) > CFG.depthTolerance * 0.75) return false;
+      if (!this.depthAligned(0.75)) return false;
       const facing = opp.x >= me.x ? 1 : -1;
       const a = me.def.attackBox;
       const x = facing === 1 ? me.x + a.near : me.x - a.near - a.reach;
@@ -402,17 +459,110 @@
       return rectsOverlap(r, opp.bodyRect());
     }
 
+    // 背中側の壁に追い詰められているか
+    cornered() {
+      const me = this.me, dirX = this.opp.x >= me.x ? 1 : -1;
+      const back = dirX > 0 ? me.x - CFG.field.left : CFG.field.right - me.x;
+      return back < (CFG.ai.cornerMargin || 70);
+    }
+
+    // プレイヤーに隙がある（空振り硬直中、または攻撃後の待ち時間中）
+    oppVulnerable(now) {
+      const o = this.opp;
+      if (o.state === 'hurt' || o.state === 'down' || o.state === 'downLoop') return false;
+      return o.isRecovering() || (o.canAct() && now < o.cooldownUntil && o.attackSerial > 0);
+    }
+
+    // 奥行きの空いている方向（回り込み・回避用）
+    roomyDepthDir() {
+      const me = this.me, f = CFG.field;
+      const up = me.y - f.top, down = f.bottom - me.y;
+      // プレイヤーと違う奥行きへずれる方が良いが、端に近ければ広い方へ
+      const away = me.y <= this.opp.y ? -1 : 1;
+      if ((away < 0 && up < 50) || (away > 0 && down < 50)) return up > down ? -1 : 1;
+      return away;
+    }
+
+    // プレイヤーの攻撃が自分より先に当たりそうなら、攻撃を出さない
+    safeToAttack() {
+      const o = this.opp;
+      if (o.state !== 'attack') return true;
+      const oppLeft = o.duration('attack') - o.stateTime;
+      return oppLeft > this.me.duration('attack') + 30;
+    }
+
+    stepToward(targetGap, dirX, dy, xScale) {
+      // プレイヤーが攻撃を振っている間は、射程の中へは入らない
+      if (this.opp.state === 'attack') targetGap = Math.max(targetGap, this.oppReach() + (CFG.ai.spacingMargin || 0));
+      const ex = this.gapX() - targetGap; // 正 = 遠い
+      let mx = Math.abs(ex) > 6 ? (ex > 0 ? dirX : -dirX) : 0;
+      if (mx === -dirX && this.cornered()) mx = 0;
+      const my = Math.abs(dy) > 6 ? Math.sign(dy) : 0;
+      const len = Math.hypot(mx, my) || 1;
+      return { x: mx / len * (xScale || 1), y: my / len };
+    }
+
     // 戻り値: { move, attack }
     update(now) {
       const A = CFG.ai, me = this.me, opp = this.opp;
+      if (now < this.startAt || !me.canAct()) return { move: { x: 0, y: 0 }, attack: false };
+      const dirX = opp.x >= me.x ? 1 : -1;
+      const dy = opp.y - me.y;
       let attack = false;
 
+      // ---- プレイヤーが振り始めた：少し遅れて、射程内なら下がる／奥行きへかわす ----
+      if (opp.state === 'attack') {
+        if (this.evadeSerial !== opp.attackSerial) {
+          this.evadeSerial = opp.attackSerial;
+          this.evadeDecideAt = now + A.thinkInterval * rand(0.25, 0.65);
+          this.evadeDecided = false;
+        }
+        if (!this.evadeDecided && now >= this.evadeDecideAt) {
+          this.evadeDecided = true;
+          this.decideEvade(now, dirX);
+        }
+      }
+      if (this.mode === 'evade') {
+        if (now >= this.modeUntil) this.mode = 'space';
+        else {
+          if (!this.evadeDepth && this.cornered()) { this.evadeDepth = true; this.dodgeDir = this.roomyDepthDir(); }
+          this.move = this.evadeDepth ? { x: -dirX * 0.3, y: this.dodgeDir } : { x: -dirX, y: 0 };
+          return { move: this.move, attack: false };
+        }
+      }
+
+      // ---- 隙を突く（毎フレーム監視、反応の遅れはごく短い） ----
+      if (this.oppVulnerable(now)) {
+        if (this.seenSerial !== opp.attackSerial) {
+          this.seenSerial = opp.attackSerial;
+          const lunge = this.gapX() - this.myReach() * 0.85;
+          if (Math.random() < A.punishChance && lunge <= (A.punishLungeDist || 0) && this.depthAligned(1.6)) {
+            this.mode = 'punish';
+            this.modeUntil = Infinity;
+            this.punishAt = now + (A.punishReactionMs || 0);
+            this.attackAt = 0;
+          }
+        }
+      } else if (this.mode === 'punish') {
+        this.mode = 'space';   // 隙が終わったら深追いしない
+      }
+
+      if (this.mode === 'punish') {
+        if (now >= this.punishAt && now >= me.cooldownUntil && this.inRange()) {
+          attack = true;
+          this.mode = 'space';
+        } else {
+          this.move = this.stepToward(this.myReach() * 0.6, dirX, dy);
+        }
+        return { move: attack ? { x: 0, y: 0 } : this.move, attack: attack };
+      }
+
+      // ---- 自分からの攻撃（予約済み） ----
       if (this.attackAt && now >= this.attackAt) {
         this.attackAt = 0;
-        if (me.canAct() && this.inRange()) {
+        if (this.inRange() && now >= me.cooldownUntil && this.safeToAttack()) {
           attack = true;
-          this.cooldownUntil = now + me.duration('attack') + rand(A.attackCooldownMin, A.attackCooldownMax);
-          if (Math.random() < A.retreatChance * 1.5) this.retreatUntil = now + me.duration('attack') + A.retreatMs;
+          if (this.mode === 'engage') this.mode = 'space';
         }
       }
 
@@ -420,52 +570,75 @@
         this.nextThink = now + A.thinkInterval * rand(0.7, 1.3);
         this.think(now);
       }
+      return { move: attack ? { x: 0, y: 0 } : this.move, attack: attack };
+    }
 
-      if (!me.canAct()) return { move: { x: 0, y: 0 }, attack: false };
-      return { move: this.move, attack: attack };
+    decideEvade(now, dirX) {
+      const A = CFG.ai, opp = this.opp;
+      const danger = this.gapX() < this.oppReach() + 10 && this.depthAligned(1.2);
+      if (!danger || this.mode === 'punish') return;
+      const r = Math.random();
+      if (r < A.backstepChance) {
+        this.evadeDepth = this.cornered();   // 壁際なら奥行きへ
+      } else if (r < A.backstepChance + A.dodgeChance) {
+        this.evadeDepth = true;
+      } else {
+        return;
+      }
+      this.mode = 'evade';
+      this.modeUntil = now + Math.max(200, opp.duration('attack') - opp.stateTime + 60);
+      this.dodgeDir = this.roomyDepthDir();
+      this.attackAt = 0;
     }
 
     think(now) {
       const A = CFG.ai, me = this.me, opp = this.opp;
       const dx = opp.x - me.x, dy = opp.y - me.y;
       const dirX = dx >= 0 ? 1 : -1;
+      const gap = this.gapX();
+      const threat = this.oppReach();
+      const jitter = rand(0, A.decisionJitterMs || 0);
 
-      // 相手の攻撃が来そうなら、たまに奥行き方向へ避ける
-      if (opp.state === 'attack' && Math.abs(dx) < 200 && Math.random() < 0.25 && now >= this.dodgeUntil) {
-        this.dodgeUntil = now + 380;
-        this.dodgeDir = me.y < (CFG.field.top + CFG.field.bottom) / 2 ? 1 : -1;
-      }
-      if (now < this.dodgeUntil) { this.move = { x: -dirX * 0.3, y: this.dodgeDir }; return; }
+      if (this.mode !== 'space' && now >= this.modeUntil) this.mode = 'space';
 
-      // 一時的に下がる
-      if (now < this.retreatUntil) {
-        const nearWall = (me.x < CFG.field.left + 40 && dirX > 0) || (me.x > CFG.field.right - 40 && dirX < 0);
-        this.move = { x: nearWall ? 0 : -dirX, y: Math.sign(rand(-1, 1)) * 0.4 };
+      // ---- 回り込み（壁際から抜ける） ----
+      if (this.mode === 'sidestep') {
+        this.move = { x: dirX * 0.6, y: this.dodgeDir };
         return;
       }
-      if (Math.random() < A.retreatChance * 0.3) { this.retreatUntil = now + A.retreatMs; return; }
 
-      // 射程内なら攻撃を予約（反応の遅れ付き）
-      if (this.inRange()) {
-        if (!this.attackAt && now >= this.cooldownUntil && Math.random() < A.attackChance) {
-          this.attackAt = now + A.reactionDelay * rand(0.6, 1.4);
+      // ---- 射程内：自分から攻撃することもある ----
+      if (this.inRange() && !this.attackAt && now >= me.cooldownUntil && Math.random() < A.attackChance) {
+        this.attackAt = now + A.reactionDelay * rand(0.6, 1.4) + jitter;
+      }
+
+      // ---- 踏み込み（受け身になりすぎないように） ----
+      if (this.mode === 'space' && Math.random() < A.engageChance) {
+        this.mode = 'engage';
+        this.modeUntil = now + A.engageMs;
+      }
+      if (this.mode === 'engage') {
+        if (this.inRange() && this.safeToAttack()) {
+          if (!this.attackAt && now >= me.cooldownUntil) this.attackAt = now + A.reactionDelay * rand(0.3, 0.8) + jitter;
+          this.move = { x: 0, y: Math.abs(dy) > 6 ? Math.sign(dy) * 0.6 : 0 };
+        } else {
+          this.move = this.stepToward(this.myReach() * 0.6, dirX, dy);
         }
-        this.move = { x: 0, y: Math.abs(dy) > 6 ? Math.sign(dy) * 0.6 : 0 };
         return;
       }
 
-      // 近づく：攻撃が届く距離まで横移動しつつ、奥行きを合わせる
-      const a = me.def.attackBox;
-      const oppHalf = opp.bodyRect().w / 2;
-      const desired = a.near + a.reach * 0.5 + oppHalf - 4 + A.preferredGap * 0.1;
-      const targetX = opp.x - dirX * desired;
-      const ex = targetX - me.x;
-      let mx = Math.abs(ex) > 8 ? Math.sign(ex) : 0;
-      let my = Math.abs(dy) > 8 ? Math.sign(dy) : 0;
-      // クールダウン中は少し距離を取る
-      if (now < this.cooldownUntil && Math.abs(dx) < desired + A.preferredGap) mx = Math.random() < 0.5 ? -dirX : 0;
-      const len = Math.hypot(mx, my) || 1;
-      this.move = { x: mx / len, y: my / len };
+      // ---- 間合い取り：プレイヤーの射程のすぐ外で待ち、ときどき踏み込んで誘う ----
+      if (now >= this.feintUntil && opp.state !== 'attack' && Math.random() < A.feintChance) this.feintUntil = now + A.feintMs;
+      const target = now < this.feintUntil ? threat - A.feintDepth : threat + A.spacingMargin;
+      // 追い詰められていて、プレイヤーが近いなら奥行き方向へ回り込む
+      if (this.cornered() && gap < threat + A.spacingMargin) {
+        this.mode = 'sidestep';
+        this.modeUntil = now + A.sidestepMs;
+        this.dodgeDir = this.roomyDepthDir();
+        this.move = { x: dirX * 0.6, y: this.dodgeDir };
+        return;
+      }
+      this.move = this.stepToward(target, dirX, dy);
     }
   }
 
@@ -588,7 +761,7 @@
       attacker.lastAttackHit = hit;
       attacker.attackFlashUntil = this.time + CFG.hitboxFlashMs;
       if (hit) {
-        defender.takeHit(attacker.facing, this.time);
+        defender.takeHit(attacker, this.time);
         this.effects.push({ x: (Math.max(ar.x, br.x) + Math.min(ar.x + ar.w, br.x + br.w)) / 2, y: defender.y - defender.def.height * 0.55, t: this.time, color: attacker.charId === 'angel' ? '255,240,150' : '200,80,255' });
         if (defender.life <= 0) this.onKO(attacker === this.player ? 'player' : 'enemy', 'KO!');
       }

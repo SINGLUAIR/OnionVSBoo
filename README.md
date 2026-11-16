@@ -468,15 +468,40 @@ background: {
 | `autoFaceOpponent` | true | 常に相手の方を向く（false なら移動方向を向く） |
 | `separation` | 0.8 | 同じ奥行きで体が重ならないようにする距離（0 ですり抜け可） |
 | `depthTolerance` | 36 | 攻撃が当たる奥行きの差（px） |
-| `attackCooldown` | 120 | 攻撃後、次の攻撃までの待ち時間（ms） |
+| `attackCooldown` | 120 | 攻撃後、次の攻撃までの待ち時間（ms）。プレイヤーと敵で共通 |
+| `whiffRecoveryMs` | 350 | 攻撃を外したときの硬直（ms）。この間は移動も攻撃もできない（両者共通） |
+| `whiffLeanDeg` | 7 | 空振り硬直中に前へつんのめる角度（度）。0 で演出なし |
 | `invulnerableMs` | 700 | 被ダメ後の無敵時間（ms） |
-| `knockback` | 70 | 被ダメ時に下がる距離（px） |
+| `knockback` | 140 | 被ダメ時に下がる最低距離（px） |
+| `knockbackReachMargin` | 30 | 攻撃した側の射程より、さらにこの距離だけ外まで押し出す（px）。連続ヒット防止 |
+| `wallPushbackRatio` | 1.0 | 壁際で押し出しきれない分を、攻撃した側を押し戻す割合（0 で押し戻さない） |
 | `touch.*` | — | タップ／フリック判定のしきい値、フリック後に移動を続ける時間 |
-| `ai.*` | — | 敵の強さ（攻撃する確率、反応の遅れ、攻撃後の休み、下がる確率、移動速度倍率など） |
+| `ai.*` | — | 敵の強さ（下の表） |
 | `roundIntroMs` / `koPauseMs` | 1600 / 2000 | ラウンド開始表示・KO 後の待ち時間（ms） |
 | `debugHitboxes` | false | 起動時から当たり判定を表示するか |
 
-**敵を弱くしたいとき：** `ai.attackChance` を下げる、`ai.reactionDelay` や `ai.attackCooldownMin/Max` を上げる、`ai.speedScale` を下げる。
+### 敵（NPC）の AI（`ai.*`）
+
+敵はプレイヤーの攻撃が届く距離のすぐ外で待ち、ときどき踏み込んで攻撃を誘います。プレイヤーが空振りしたり攻撃後の待ち時間に入ったりすると、すぐに踏み込んで反撃します。
+
+| 項目 | 初期値 | 内容 |
+|---|---|---|
+| `ai.speedScale` | 1 | 敵の移動速度倍率（1 = プレイヤーと同じ） |
+| `ai.thinkInterval` | 180 | 行動を考え直す間隔（ms） |
+| `ai.decisionJitterMs` | 60 | 攻撃のタイミングに入る小さなランダムな遅れ（ms） |
+| `ai.reactionDelay` | 160 | 自分から攻撃するときの反応の遅れ（ms） |
+| `ai.attackChance` | 0.5 | 射程内で自分から攻撃する確率（判断ごと） |
+| `ai.punishChance` | 0.85 | プレイヤーの隙（空振り・攻撃後）を見て反撃に行く確率 |
+| `ai.punishReactionMs` | 80 | 隙を見てから攻撃を出すまでの遅れ（ms） |
+| `ai.punishLungeDist` | 90 | 射程の外でも、この距離（px）までなら踏み込んで反撃する |
+| `ai.spacingMargin` | 24 | プレイヤーの射程より、どれだけ外側で待つか（px） |
+| `ai.feintChance` / `ai.feintDepth` / `ai.feintMs` | 0.3 / 22 / 260 | 射程へ一瞬踏み込んで誘う確率・深さ（px）・時間（ms） |
+| `ai.backstepChance` | 0.5 | 射程内でプレイヤーが振り始めたとき、射程の外へ下がる確率 |
+| `ai.dodgeChance` | 0.25 | 奥行き方向へかわす確率 |
+| `ai.engageChance` / `ai.engageMs` | 0.12 / 800 | 自分から踏み込んで攻撃しに行く確率（判断ごと）と、続ける時間（ms） |
+| `ai.cornerMargin` / `ai.sidestepMs` | 70 / 520 | 背中側の壁までこの距離（px）以下なら、奥行き方向へ回り込む。回り込む時間（ms） |
+
+**敵を弱くしたいとき：** `ai.punishChance` を下げる、`ai.punishReactionMs` や `ai.reactionDelay` を上げる、`whiffRecoveryMs` を短くする、`ai.backstepChance` を下げる。
 **敵を強くしたいとき：** その逆にします。
 
 ---
@@ -490,7 +515,9 @@ background: {
 - 速度アップの判定は攻撃の開始時に行い、攻撃の途中で状態が変わっても、その攻撃の長さは変わらない。
 - 移動速度アップ中は移動モーションの再生も速くなる。
 - 制限時間はなし（`roundTimeLimit` で追加可能）。
-- 敵の速度はプレイヤーの 0.9 倍（`ai.speedScale`）。
+- 敵の速度と攻撃後の待ち時間はプレイヤーと同じ（`ai.speedScale`、`attackCooldown`）。
+- 攻撃を外すと、プレイヤーも敵も硬直する（`whiffRecoveryMs`）。待ち時間（`attackCooldown`）は硬直が終わってから数える。無敵中の相手に当てた場合も空振り扱い。
+- 攻撃が当たると、相手は攻撃した側の射程の外まで押し出される（`knockback`、`knockbackReachMargin`）。壁際で下がれないときは攻撃した側が押し戻される（`wallPushbackRatio`）。
 - パーツモードでは、画像を置いていないパーツは仮の図形で描く（画像と図形を混ぜて表示できる）。
 - 翼は片側だけ描き、反対側は左右反転して自動で足す（`parts.wings.mirror`）。6枚を1枚にまとめた画像を使う場合は `false` にする。
 
