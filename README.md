@@ -98,7 +98,8 @@ python3 -m http.server 8000
 - 速度アップ中はキャラのまわりにオーラが出て、画面上部に「速度アップ中！」と表示されます。
 
 ### 攻撃の当たり判定
-- 攻撃判定は **攻撃アニメーションの最後（最後のコマ）** に一瞬だけ出ます。
+- 攻撃判定は **攻撃アニメーションの `hitAt` の位置**（初期値 0.35。天使なら開始から約0.15秒、ルシファーは約0.16秒）に一瞬だけ出ます。そのあとは振り抜いた後の戻りの動作です（全体の長さは `duration` のまま）。APNG／コマ送りの攻撃を描くときは、このタイミングで剣が振り下ろし終わるようにしてください。
+- キャラごとに変えたいときは `assets/config.js` の `states.attack` に `hitAt: 0.3` のように書きます（書かなければ `js/config.js` の `attackHitAt` を使います）。
 - 判定はキャラが **向いている側（左右の片側）だけ** に出ます。
 - 攻撃判定の範囲が **相手の画像（体の当たり判定）に触れているとき** だけ当たります。
 - さらに、奥行き（上下の位置）が近いときだけ当たります（`depthTolerance`）。
@@ -268,7 +269,7 @@ head: {
 | `attackArmFrom` / `attackArmTo` | -91.7 / 45.8 | 攻撃の振りかぶり → 振り下ろしの角度（度） |
 | `attackLeanFrom` / `attackLeanTo` | -8.6 / 17.2 | 攻撃中の体の傾き（度） |
 | `hurtLean` / `hurtArm` / `hurtBob` | -20 / -34.4 / -4 | 被ダメののけぞり・腕の角度・上下のずれ |
-| `slashFrom` | 0.82 | 攻撃アニメーションのどこから斬撃エフェクトを出すか（0〜1） |
+| `slashFrom` | 0.82 | 斬撃エフェクトの長さの目安（1 − slashFrom の割合だけ表示）。`js/config.js` の `slashFollowsHit` が false のときは、この位置から表示 |
 | `downBreathAmp` | 0.02 | 倒れ続けの呼吸の拡縮幅（`downLoop.breathAmp` があればそちらが優先） |
 | `downBreathPeriod` | 2000 | 倒れ続けの呼吸1回の長さ（ミリ秒。`downLoop.breathPeriod` が優先） |
 
@@ -372,7 +373,7 @@ H キーを押すと、倒れ続けのパーツでもピボット（＋）と画
 |---|---|---|---|
 | 待機 | `assets/sprites/angel/idle.png` | `assets/sprites/lucifer/idle.png` | ループ |
 | 移動（浮遊） | `assets/sprites/angel/move.png` | `assets/sprites/lucifer/move.png` | ループ |
-| 攻撃 | `assets/sprites/angel/attack.png` | `assets/sprites/lucifer/attack.png` | 1回（最後のコマで判定） |
+| 攻撃 | `assets/sprites/angel/attack.png` | `assets/sprites/lucifer/attack.png` | 1回（`hitAt` の位置で判定） |
 | 被ダメ | `assets/sprites/angel/hurt.png` | `assets/sprites/lucifer/hurt.png` | 1回 |
 | 倒れる瞬間 | `assets/sprites/angel/down.png` | `assets/sprites/lucifer/down.png` | 1回（終わると倒れ続けへ） |
 | 勝利（任意） | `assets/sprites/angel/win.png` | `assets/sprites/lucifer/win.png` | ループ |
@@ -469,7 +470,9 @@ background: {
 | `separation` | 0.8 | 同じ奥行きで体が重ならないようにする距離（0 ですり抜け可） |
 | `depthTolerance` | 36 | 攻撃が当たる奥行きの差（px） |
 | `attackCooldown` | 120 | 攻撃後、次の攻撃までの待ち時間（ms）。プレイヤーと敵で共通 |
-| `whiffRecoveryMs` | 350 | 攻撃を外したときの硬直（ms）。この間は移動も攻撃もできない（両者共通） |
+| `attackHitAt` | 0.35 | 攻撃判定が出るタイミング（攻撃モーション全体に対する割合）。キャラごとの `states.attack.hitAt` が優先 |
+| `slashFollowsHit` | true | 斬撃エフェクトを判定のタイミングから出す |
+| `whiffRecoveryMs` | 250 | 攻撃を外したときの硬直（ms）。攻撃モーションが終わってから始まる。この間は移動も攻撃もできない（両者共通） |
 | `whiffLeanDeg` | 7 | 空振り硬直中に前へつんのめる角度（度）。0 で演出なし |
 | `invulnerableMs` | 700 | 被ダメ後の無敵時間（ms） |
 | `knockback` | 140 | 被ダメ時に下がる最低距離（px） |
@@ -491,14 +494,14 @@ background: {
 | `ai.decisionJitterMs` | 60 | 攻撃のタイミングに入る小さなランダムな遅れ（ms） |
 | `ai.reactionDelay` | 160 | 自分から攻撃するときの反応の遅れ（ms） |
 | `ai.attackChance` | 0.5 | 射程内で自分から攻撃する確率（判断ごと） |
-| `ai.punishChance` | 0.85 | プレイヤーの隙（空振り・攻撃後）を見て反撃に行く確率 |
+| `ai.punishChance` | 0.55 | プレイヤーの隙（空振り・攻撃後）を見て反撃に行く確率 |
 | `ai.punishReactionMs` | 80 | 隙を見てから攻撃を出すまでの遅れ（ms） |
 | `ai.punishLungeDist` | 90 | 射程の外でも、この距離（px）までなら踏み込んで反撃する |
-| `ai.spacingMargin` | 24 | プレイヤーの射程より、どれだけ外側で待つか（px） |
-| `ai.feintChance` / `ai.feintDepth` / `ai.feintMs` | 0.3 / 22 / 260 | 射程へ一瞬踏み込んで誘う確率・深さ（px）・時間（ms） |
-| `ai.backstepChance` | 0.5 | 射程内でプレイヤーが振り始めたとき、射程の外へ下がる確率 |
+| `ai.spacingMargin` | -10 | プレイヤーの射程より、どれだけ外側で待つか（px）。マイナスなら射程の少し内側で待つ |
+| `ai.feintChance` / `ai.feintDepth` / `ai.feintMs` | 0.4 / 22 / 260 | 射程へ一瞬踏み込んで誘う確率・深さ（px）・時間（ms） |
+| `ai.backstepChance` | 0.25 | 射程内でプレイヤーが振り始めたとき、射程の外へ下がる確率 |
 | `ai.dodgeChance` | 0.25 | 奥行き方向へかわす確率 |
-| `ai.engageChance` / `ai.engageMs` | 0.12 / 800 | 自分から踏み込んで攻撃しに行く確率（判断ごと）と、続ける時間（ms） |
+| `ai.engageChance` / `ai.engageMs` | 0.2 / 800 | 自分から踏み込んで攻撃しに行く確率（判断ごと）と、続ける時間（ms） |
 | `ai.cornerMargin` / `ai.sidestepMs` | 70 / 520 | 背中側の壁までこの距離（px）以下なら、奥行き方向へ回り込む。回り込む時間（ms） |
 
 **敵を弱くしたいとき：** `ai.punishChance` を下げる、`ai.punishReactionMs` や `ai.reactionDelay` を上げる、`whiffRecoveryMs` を短くする、`ai.backstepChance` を下げる。
@@ -516,7 +519,8 @@ background: {
 - 移動速度アップ中は移動モーションの再生も速くなる。
 - 制限時間はなし（`roundTimeLimit` で追加可能）。
 - 敵の速度と攻撃後の待ち時間はプレイヤーと同じ（`ai.speedScale`、`attackCooldown`）。
-- 攻撃を外すと、プレイヤーも敵も硬直する（`whiffRecoveryMs`）。待ち時間（`attackCooldown`）は硬直が終わってから数える。無敵中の相手に当てた場合も空振り扱い。
+- 攻撃は「予備動作 → 判定（`hitAt`） → 戻り」の順。予備動作中に攻撃を受けると、その攻撃は出ない。判定が外れたあとの戻りの動作中も、敵は隙として反撃を狙う。
+- 攻撃を外すと、攻撃モーションのあとにプレイヤーも敵も硬直する（`whiffRecoveryMs`）。待ち時間（`attackCooldown`）は硬直が終わってから数える。無敵中の相手に当てた場合も空振り扱い。
 - 攻撃が当たると、相手は攻撃した側の射程の外まで押し出される（`knockback`、`knockbackReachMargin`）。壁際で下がれないときは攻撃した側が押し戻される（`wallPushbackRatio`）。
 - パーツモードでは、画像を置いていないパーツは仮の図形で描く（画像と図形を混ぜて表示できる）。
 - 翼は片側だけ描き、反対側は左右反転して自動で足す（`parts.wings.mirror`）。6枚を1枚にまとめた画像を使う場合は `false` にする。

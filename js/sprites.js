@@ -502,6 +502,19 @@
     downBreathPeriod: 2000    // 倒れ続け：呼吸1回の長さ（ミリ秒）
   };
   const DEG = Math.PI / 180;
+  // 攻撃の振りの進み具合（0 = 振りかぶり、1 = 振り下ろし終わり）
+  //  0〜hitAt   : 少しためてから一気に振り下ろす（判定の瞬間に振り下ろし終わる）
+  //  hitAt〜1   : 振り抜いた勢いで少し行き過ぎて、ゆっくり戻る
+  function attackSwing(p, hitAt) {
+    if (hitAt >= 1) return p; // 従来どおり（最後に判定）
+    if (p < hitAt) {
+      const t = p / hitAt;
+      return t * t * t;       // ため → 加速
+    }
+    const t = (p - hitAt) / (1 - hitAt);
+    return 1 + 0.12 * Math.sin(Math.PI * Math.min(1, t * 1.6)) * (1 - t * 0.5);
+  }
+
   function motionCfg() {
     const m = (window.ASSET_CONFIG && window.ASSET_CONFIG.motion) || {};
     return Object.assign({}, DEFAULT_MOTION, m);
@@ -532,9 +545,12 @@
     ctx.save();
     const baseAlpha = ctx.globalAlpha;
     let bob = 0, lean = 0, rot = 0, alpha = 1, flapSpeed = M.idleFlapSpeed;
+    // 攻撃の振り：判定のタイミング（hitAt）で振り下ろしが終わり、残りは振り抜いた後の余韻
+    const hitAt = opts.hitAt != null ? opts.hitAt : 1;
+    const swing = state === 'attack' ? attackSwing(progress, hitAt) : 0;
     if (state === 'idle' || state === 'win') { bob = Math.sin(time * M.idleBobSpeed) * M.idleBob; }
     if (state === 'move') { bob = Math.sin(time * M.moveBobSpeed) * M.moveBob; lean = M.moveLean * DEG; flapSpeed = M.moveFlapSpeed; }
-    if (state === 'attack') { lean = (M.attackLeanFrom + (M.attackLeanTo - M.attackLeanFrom) * progress) * DEG; }
+    if (state === 'attack') { lean = (M.attackLeanFrom + (M.attackLeanTo - M.attackLeanFrom) * swing) * DEG; }
     if (state === 'hurt') { lean = M.hurtLean * DEG; bob = M.hurtBob; }
     if (state === 'down') { rot = -Math.min(1, progress * 1.4) * Math.PI / 2; alpha = 1 - Math.max(0, progress - 0.7) * 1.2; }
 
@@ -562,7 +578,7 @@
     // 各パーツの「付け根（ピボットを置く位置）」と角度（仮の図形と共通）
     const flap = (state === 'downLoop') ? 0 : Math.sin(time * flapSpeed) * M.wingFlap * DEG;
     let armAngle = M.idleArm * DEG;
-    if (state === 'attack') armAngle = (M.attackArmFrom + (M.attackArmTo - M.attackArmFrom) * progress) * DEG; // 振りかぶり → 振り下ろし
+    if (state === 'attack') armAngle = (M.attackArmFrom + (M.attackArmTo - M.attackArmFrom) * swing) * DEG; // 振りかぶり → 振り下ろし
     if (state === 'hurt') armAngle = M.hurtArm * DEG;
     const joints = {
       wings: { x: -bw * 0.2, y: -bh * 0.7 },
@@ -863,9 +879,13 @@
 
     ctx.restore();
 
-    // 攻撃の最後：前方に斬撃エフェクト
-    if (state === 'attack' && progress > M.slashFrom) {
-      const a = (progress - M.slashFrom) / (1 - M.slashFrom);
+    // 斬撃エフェクト（判定のタイミングから。slashFollowsHit が false なら slashFrom から）
+    const G = window.GAME_CONFIG || {};
+    const slashLen = Math.max(0.05, 1 - M.slashFrom);
+    const slashStart = (G.slashFollowsHit !== false && hitAt < 1) ? Math.max(0, hitAt - 0.04) : M.slashFrom;
+    const slashEnd = Math.min(1, slashStart + slashLen);
+    if (state === 'attack' && progress > slashStart && progress <= slashEnd) {
+      const a = (progress - slashStart) / (slashEnd - slashStart);
       ctx.save();
       ctx.strokeStyle = isAngel ? 'rgba(255,240,150,' + (1 - a * 0.5) + ')' : 'rgba(200,60,255,' + (1 - a * 0.5) + ')';
       ctx.lineWidth = 8;
