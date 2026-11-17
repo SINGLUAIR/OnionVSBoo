@@ -503,13 +503,16 @@
   };
   const DEG = Math.PI / 180;
   // 攻撃の振りの進み具合（0 = 振りかぶり、1 = 振り下ろし終わり）
-  //  0〜hitAt   : 少しためてから一気に振り下ろす（判定の瞬間に振り下ろし終わる）
+  //  0〜hitAt   : 振りかぶったポーズでため、終盤で一気に振り下ろす（判定の瞬間に振り下ろし終わる）
   //  hitAt〜1   : 振り抜いた勢いで少し行き過ぎて、ゆっくり戻る
   function attackSwing(p, hitAt) {
     if (hitAt >= 1) return p; // 従来どおり（最後に判定）
     if (p < hitAt) {
       const t = p / hitAt;
-      return t * t * t;       // ため → 加速
+      const holdEnd = 0.72;   // ここまでは振りかぶったまま
+      if (t <= holdEnd) return 0;
+      const s = (t - holdEnd) / (1 - holdEnd);
+      return s * s;           // 判定に向けて加速して振り下ろす
     }
     const t = (p - hitAt) / (1 - hitAt);
     return 1 + 0.12 * Math.sin(Math.PI * Math.min(1, t * 1.6)) * (1 - t * 0.5);
@@ -550,7 +553,13 @@
     const swing = state === 'attack' ? attackSwing(progress, hitAt) : 0;
     if (state === 'idle' || state === 'win') { bob = Math.sin(time * M.idleBobSpeed) * M.idleBob; }
     if (state === 'move') { bob = Math.sin(time * M.moveBobSpeed) * M.moveBob; lean = M.moveLean * DEG; flapSpeed = M.moveFlapSpeed; }
-    if (state === 'attack') { lean = (M.attackLeanFrom + (M.attackLeanTo - M.attackLeanFrom) * swing) * DEG; }
+    if (state === 'attack') {
+      lean = (M.attackLeanFrom + (M.attackLeanTo - M.attackLeanFrom) * swing) * DEG;
+      // 予備動作中の追加後傾（左右反転後のローカル空間なので向きを気にしなくてよい）
+      if (opts.windupHold > 0 && opts.windupExtraLeanDeg) {
+        lean -= opts.windupExtraLeanDeg * opts.windupHold * DEG;
+      }
+    }
     if (state === 'hurt') { lean = M.hurtLean * DEG; bob = M.hurtBob; }
     if (state === 'down') { rot = -Math.min(1, progress * 1.4) * Math.PI / 2; alpha = 1 - Math.max(0, progress - 0.7) * 1.2; }
 

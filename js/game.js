@@ -148,6 +148,9 @@
       this.recoverLeft = 0;   // 空振り硬直の残り時間（ミリ秒）
       this.recoverTotal = 0;
       this.attackSerial = 0;  // 攻撃を出すたびに増える番号（AI が「この攻撃」を区別するため）
+      this.dodge = null;            // { fromX, fromY, dx, dy, t, dur }
+      this.dodgeCooldownUntil = 0;
+      this.dodgeTrail = [];
     }
 
     get buff() {
@@ -162,24 +165,44 @@
     duration(state) {
       const st = this.def.states;
       if (state === 'down') return window.SpriteBank.downDuration(this.charId);
-      if (state === 'attack') {
-        if (this.attackStartMult == null) return st.attack.duration / this.attackMult;
-        return st.attack.duration / this.attackStartMult; // 攻撃速度倍率でアニメーション時間を短縮（再生も速くなる）
-      }
+      if (state === 'attack') return this.attackTiming().total;
       if (state === 'move') return st.move.duration / this.moveMult;   // 移動速度アップ中は移動モーションも速く
       return (st[state] && st[state].duration) || 500;
     }
 
-    // 攻撃判定が出るタイミング（攻撃アニメーション全体に対する割合 0〜1）
+    // 攻撃判定が出るタイミング（設定上の割合 0〜1）。実際の判定時刻は hitTime()
     get hitAt() {
       const a = this.def.states && this.def.states.attack;
       const v = a && a.hitAt != null ? a.hitAt : CFG.attackHitAt;
       return v == null ? 1 : clamp(v, 0.05, 1);
     }
+    // 攻撃の時間配分。attackWindupMs が duration×hitAt より長いときは判定を遅らせ、振り抜きの長さは保つ
+    attackTiming() {
+      const st = this.def.states;
+      const mult = this.attackStartMult != null ? this.attackStartMult : this.attackMult;
+      const base = st.attack.duration / mult;
+      const frac = this.hitAt;
+      const windup = (CFG.attackWindupMs || 0) / mult;
+      const hit = Math.max(windup, base * frac);
+      const follow = base * (1 - frac);
+      const total = hit + follow;
+      return { base: base, hit: hit, follow: follow, total: total, progress: total > 0 ? hit / total : frac };
+    }
     // 攻撃開始から判定が出るまでの時間（ミリ秒）
-    hitTime() { return this.duration('attack') * this.hitAt; }
+    hitTime() { return this.attackTiming().hit; }
+    // アニメーション進行度のうち、判定が出る位置（0〜1）。描画の振り下ろし合わせに使う
+    hitAtProgress() { return this.attackTiming().progress; }
     // 攻撃中で、まだ判定が出ていない（予備動作中）
     inStartup() { return this.state === 'attack' && !this.hitDone; }
+    isDodging() { return !!(this.dodge && this.dodge.t < this.dodge.dur); }
+    // 予備動作の「ため」の強さ 0〜1（序盤で立ち上がり、振り下ろしで戻る）
+    windupHold() {
+      if (!this.inStartup()) return 0;
+      const ht = this.hitTime();
+      const u = ht > 0 ? clamp(this.stateTime / ht, 0, 1) : 1;
+      const charge = u < 0.18 ? u / 0.18 : 1;
+      return u < 0.72 ? charge : Math.max(0, (1 - u) / 0.28);
+    }
 
     // ステートを切り替える。stateTime が 0 に戻るので、1回再生のアニメーションは先頭から再生される
     setState(s) {
@@ -218,7 +241,7 @@
       return this.facing !== base;
     }
 
-    canAct() { return (this.state === 'idle' || this.state === 'move') && !(this.recoverLeft > 0); }
+    canAct() { return (this.state === 'idle' || this.state === 'move') && !(this.recoverLeft > 0) && !this.isDodging(); }
     isRecovering() { return this.recoverLeft > 0; }
 
     update(dt, now, move, wantAttack, opp, game) {
@@ -240,6 +263,12 @@
 
       if (this.state === 'hurt') {
         if (this.stateTime >= this.duration('hurt')) this.setState('idle');
+        return;
+      }
+
+      if (this.isDodging()) {
+        this.advanceDodge(dt, now);
+        if (CFG.autoFaceOpponent) this.faceOpponent(opp);
         return;
       }
 
@@ -299,9 +328,56 @@
       if (Math.abs(dx) > 4) this.facing = dx > 0 ? 1 : -1;
     }
 
+    // 回避移動（プレイヤー用。専用モーションは使わず、位置だけ素早くずらす）
+    tryDodge(dir, now) {
+      if (!dir || (!dir.x && !dir.y)) return false;
+      if (!this.canAct() || now < this.dodgeCooldownUntil) return false;
+      let dx = 0, dy = 0;
+      if (Math.abs(dir.x) >= Math.abs(dir.y)) dx = dir.x < 0 ? -1 : 1;
+      else dy = dir.y < 0 ? -1 : 1;
+      const f = CFG.field;
+      const toX = clamp(this.x + dx * (CFG.dodgeDistanceX || 0), f.left, f.right);
+      const toY = clamp(this.y + dy * (CFG.dodgeDistanceY || 0), f.top, f.bottom);
+      if (Math.abs(toX - this.x) < 0.5 && Math.abs(toY - this.y) < 0.5) return false;
+      this.dodge = {
+        fromX: this.x, fromY: this.y,
+        dx: toX - this.x, dy: toY - this.y,
+        t: 0, dur: Math.max(1, CFG.dodgeMs || 200)
+      };
+      this.dodgeCooldownUntil = now + (CFG.dodgeCooldownMs || 400);
+      this.dodgeTrail = [];
+      this.setState('move');
+      return true;
+    }
+
+    advanceDodge(dt, now) {
+      const d = this.dodge;
+      if (!d) return;
+      d.t += dt;
+      const u = clamp(d.t / d.dur, 0, 1);
+      const e = 1 - (1 - u) * (1 - u); // ease-out quad
+      const f = CFG.field;
+      this.x = clamp(d.fromX + d.dx * e, f.left, f.right);
+      this.y = clamp(d.fromY + d.dy * e, f.top, f.bottom);
+      // 残像（既存スプライトの薄い複製。任意演出）
+      if (!this.dodgeTrail) this.dodgeTrail = [];
+      const last = this.dodgeTrail[this.dodgeTrail.length - 1];
+      if (!last || Math.hypot(this.x - last.x, this.y - last.y) >= 14) {
+        this.dodgeTrail.push({ x: this.x, y: this.y, t: now });
+        if (this.dodgeTrail.length > 3) this.dodgeTrail.shift();
+      }
+      if (d.t >= d.dur) {
+        this.dodge = null;
+        this.dodgeTrail = [];
+        this.setState('idle');
+      }
+    }
+
     takeHit(attacker, now) {
       this.life = Math.max(0, this.life - 1);
       this.recoverLeft = 0;
+      this.dodge = null;
+      this.dodgeTrail = [];
       this.applyKnockback(attacker);
       if (this.life <= 0) {
         this.setState('down');
@@ -328,7 +404,23 @@
       if (short > 0.5 && ratio > 0) attacker.knock = -dir * short * ratio;
     }
 
-    draw(c, now, debug) {
+    draw(c, now, debug, asGhost) {
+      // 回避中の残像（本体の前に薄く描く）
+      if (!asGhost && this.dodgeTrail && this.dodgeTrail.length) {
+        const trail = this.dodgeTrail;
+        const ox = this.x, oy = this.y;
+        this.dodgeTrail = null;
+        trail.forEach((g, i) => {
+          this.x = g.x; this.y = g.y;
+          c.save();
+          c.globalAlpha *= 0.18 + 0.12 * (i + 1) / trail.length;
+          this.draw(c, now, false, true);
+          c.restore();
+        });
+        this.x = ox; this.y = oy;
+        this.dodgeTrail = trail;
+      }
+
       const mode = this.def.mode || 'parts';
       const entry = window.SpriteBank.get(this.charId, this.state);
       const dur = this.duration(this.state);
@@ -338,6 +430,11 @@
 
       c.save();
       c.translate(this.x, this.y);
+      // 予備動作：後ろへ引く（見た目だけ。後傾は左右反転のあと／drawCharacter 側でかける）
+      const windupHold = this.windupHold();
+      if (windupHold > 0) {
+        c.translate(-this.facing * (CFG.windupPullPx || 0) * windupHold, 0);
+      }
       // 無敵中は点滅
       if (now < this.invulnUntil && this.state !== 'hurt' && Math.floor(now / 80) % 2 === 0) c.globalAlpha = 0.45;
       // 空振り硬直中は前へつんのめる（足元を軸に傾ける）
@@ -355,6 +452,7 @@
         // APNG モード：モーションごとの APNG をそのまま再生
         drawShadow(c, w);
         if (this.isFlipped()) c.scale(-1, 1);
+        if (windupHold > 0 && CFG.windupExtraLeanDeg) c.rotate(-CFG.windupExtraLeanDeg * windupHold * Math.PI / 180);
         c.drawImage(entry.frameAt(this.stateTime, dur, !!sc.loop), -w / 2, -h, w, h);
       } else {
         // パーツモード（画像が無いパーツは仮の図形）／画像が無いときの仮の図形。右向き基準で描画し、左向きなら反転
@@ -367,10 +465,26 @@
           debug: debug,
           flipped: this.facing === -1,
           stateTime: this.stateTime,
-          hitAt: this.hitAt
+          hitAt: this.hitAtProgress(),
+          windupHold: windupHold,
+          windupExtraLeanDeg: CFG.windupExtraLeanDeg || 0
         });
       }
       c.restore();
+
+      // 予備動作の開始フラッシュ（既存スプライトのまわりを短く光らせる）
+      if (!asGhost && this.inStartup() && this.stateTime < (CFG.windupFlashMs || 0)) {
+        const a = 1 - this.stateTime / CFG.windupFlashMs;
+        const col = this.charId === 'angel' ? '255,230,150' : '255,80,70';
+        c.save();
+        c.globalCompositeOperation = 'lighter';
+        const g = c.createRadialGradient(this.x, this.y - h * 0.55, 8, this.x, this.y - h * 0.55, h * 0.7);
+        g.addColorStop(0, 'rgba(' + col + ',' + (0.55 * a) + ')');
+        g.addColorStop(1, 'rgba(' + col + ',0)');
+        c.fillStyle = g;
+        c.fillRect(this.x - h, this.y - h * 1.3, h * 2, h * 1.5);
+        c.restore();
+      }
 
       // 速度アップ中のオーラ
       if (this.buff && this.state !== 'down' && this.state !== 'downLoop') {
@@ -421,7 +535,8 @@
       }
       c.fillStyle = '#fff';
       c.font = '12px sans-serif';
-      c.fillText(this.state + ' ' + Math.round(this.stateTime) + '/' + Math.round(this.duration(this.state)) + 'ms', ir.x, ir.y - 4);
+      const tag = this.isDodging() ? ' dodge' : (this.inStartup() ? ' windup' : '');
+      c.fillText(this.state + tag + ' ' + Math.round(this.stateTime) + '/' + Math.round(this.duration(this.state)) + 'ms', ir.x, ir.y - 4);
       c.restore();
     }
   }
@@ -861,6 +976,8 @@
       if (this.phase === 'fight') {
         pMove = window.Input.getMove();
         pAtk = window.Input.consumeAttack();
+        const pDodge = window.Input.consumeDodge();
+        if (pDodge) this.player.tryDodge(pDodge, now);
         const d = this.ai.update(now);
         eMove = d.move; eAtk = d.attack;
         if (CFG.roundTimeLimit > 0) {
@@ -873,6 +990,7 @@
         }
       } else {
         window.Input.consumeAttack();
+        if (window.Input.consumeDodge) window.Input.consumeDodge();
       }
 
       // 攻撃の終了判定が同時に起きても公平になるよう、順番を毎フレーム入れ替える

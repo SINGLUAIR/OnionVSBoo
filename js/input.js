@@ -1,29 +1,70 @@
 /*
  * 入力管理
- *  PC   : W A S D で移動、Enter で攻撃、H で当たり判定表示の切り替え
- *  スマホ: フリック／スワイプで移動（押しっぱなしなら移動し続ける）、タップで攻撃
+ *  PC   : W A S D で移動、Enter で攻撃、Shift＋方向（W A S D または矢印）で回避、H で当たり判定表示の切り替え
+ *  スマホ: フリック／スワイプで移動（押しっぱなしなら移動し続ける）、タップで攻撃、
+ *          勢いよくフリックすると上下左右へ回避
  */
 (function () {
   'use strict';
 
   const keys = {};
   let attackQueued = false;
+  let dodgeQueued = null;        // { x, y }（4方向、-1 または 1）
   const listeners = { key: [] };
 
   // タッチ状態
-  const touches = {};            // identifier -> { sx, sy, x, y, t, dragging }
+  const touches = {};            // identifier -> { ox, oy, sx, sy, x, y, t, dragging }
   let touchMove = { x: 0, y: 0 }; // 押しっぱなしの移動方向
   let flickMove = { x: 0, y: 0, until: 0 }; // フリック後の惰性移動
 
   function cfgTouch() { return window.GAME_CONFIG.touch; }
 
+  function isDirKey(k) {
+    return k === 'w' || k === 'a' || k === 's' || k === 'd' ||
+      k === 'arrowup' || k === 'arrowdown' || k === 'arrowleft' || k === 'arrowright';
+  }
+
+  function dirFromKey(k) {
+    if (k === 'a' || k === 'arrowleft') return { x: -1, y: 0 };
+    if (k === 'd' || k === 'arrowright') return { x: 1, y: 0 };
+    if (k === 'w' || k === 'arrowup') return { x: 0, y: -1 };
+    if (k === 's' || k === 'arrowdown') return { x: 0, y: 1 };
+    return null;
+  }
+
+  function heldDir() {
+    if (keys['a'] || keys['arrowleft']) return { x: -1, y: 0 };
+    if (keys['d'] || keys['arrowright']) return { x: 1, y: 0 };
+    if (keys['w'] || keys['arrowup']) return { x: 0, y: -1 };
+    if (keys['s'] || keys['arrowdown']) return { x: 0, y: 1 };
+    return null;
+  }
+
+  function queueDodge(x, y) {
+    // 上下左右の4方向のみ（大きい軸を採用）
+    if (!x && !y) return;
+    if (Math.abs(x) >= Math.abs(y)) { x = x < 0 ? -1 : 1; y = 0; }
+    else { y = y < 0 ? -1 : 1; x = 0; }
+    dodgeQueued = { x: x, y: y };
+  }
+
   window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
-    if (['w', 'a', 's', 'd', 'enter', ' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) {
+    if (['w', 'a', 's', 'd', 'enter', ' ', 'shift', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].indexOf(k) >= 0) {
       e.preventDefault();
     }
+    const wasDown = !!keys[k];
     if (!keys[k] && k === 'enter') attackQueued = true;
     keys[k] = true;
+    if (!e.repeat && !wasDown) {
+      if (keys['shift'] && isDirKey(k)) {
+        const d = dirFromKey(k);
+        if (d) queueDodge(d.x, d.y);
+      } else if (k === 'shift') {
+        const d = heldDir();
+        if (d) queueDodge(d.x, d.y);
+      }
+    }
     if (!e.repeat) listeners.key.forEach((fn) => fn(k));
   });
   window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
@@ -61,7 +102,12 @@
     e.preventDefault();
     const now = performance.now();
     for (const t of e.changedTouches) {
-      touches[t.identifier] = { sx: t.clientX, sy: t.clientY, x: t.clientX, y: t.clientY, t: now, dragging: false };
+      touches[t.identifier] = {
+        ox: t.clientX, oy: t.clientY,
+        sx: t.clientX, sy: t.clientY,
+        x: t.clientX, y: t.clientY,
+        t: now, dragging: false
+      };
     }
   }, { passive: false });
 
@@ -89,12 +135,21 @@
     for (const t of e.changedTouches) {
       const s = touches[t.identifier];
       if (!s) continue;
-      const dist = Math.hypot(t.clientX - s.sx, t.clientY - s.sy);
+      // 回避判定は touchstart の位置から（移動用の始点追従の影響を受けない）
+      const dist = Math.hypot(t.clientX - s.ox, t.clientY - s.oy);
       const dur = now - s.t;
-      if (!s.dragging && dist <= c.tapMaxMove && dur <= c.tapMaxTime * 2) {
+      const speed = dist / Math.max(1, dur);
+      const minDist = c.flickDodgeMinDist != null ? c.flickDodgeMinDist : 70;
+      const maxTime = c.flickDodgeMaxTime != null ? c.flickDodgeMaxTime : 180;
+      const minSpeed = c.flickDodgeMinSpeed != null ? c.flickDodgeMinSpeed : 0.7;
+      if (dist >= minDist && dur <= maxTime && speed >= minSpeed) {
+        const d = dirFromDelta(t.clientX - s.ox, t.clientY - s.oy);
+        queueDodge(d.x, d.y);
+        listeners.key.forEach((fn) => fn('flickdodge'));
+      } else if (!s.dragging && dist <= c.tapMaxMove && dur <= c.tapMaxTime * 2) {
         attackQueued = true;                    // タップ → 攻撃
         listeners.key.forEach((fn) => fn('tap'));
-      } else if (dist >= c.dragThreshold) {
+      } else if (dist >= c.dragThreshold || s.dragging) {
         // フリック：離した後も少しの間その方向へ移動
         const d = dirFromDelta(t.clientX - s.sx, t.clientY - s.sy);
         flickMove = { x: d.x, y: d.y, until: now + c.flickMoveMs };
@@ -134,8 +189,16 @@
       attackQueued = false;
       return a;
     },
+    consumeDodge() {
+      const d = dodgeQueued;
+      dodgeQueued = null;
+      return d;
+    },
+    // テスト用：回避入力を直接入れる
+    queueDodge: queueDodge,
     clear() {
       attackQueued = false;
+      dodgeQueued = null;
       flickMove.until = 0;
       Object.keys(touches).forEach((id) => delete touches[id]);
       touchMove = { x: 0, y: 0 };
