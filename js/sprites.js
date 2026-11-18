@@ -533,6 +533,46 @@
    *  opts.debug  : true ならピボット（回転の軸）を表示
    *  opts.flipped: 左右反転して描画中か（デバッグ文字を読めるようにするため）
    */
+  // 地面の影の形。downLoop.shadow があるキャラは、倒れる途中で足元から背中の位置へなめらかに移動する
+  function groundShadowShape(charId, opts) {
+    opts = opts || {};
+    const def = (window.ASSET_CONFIG && window.ASSET_CONFIG.characters && window.ASSET_CONFIG.characters[charId]) || {};
+    const w0 = opts.width != null ? opts.width : (def.width || 140);
+    const stand = { x: 0, y: 0, rx: w0 * 0.32, ry: 10 };
+    const state = opts.state;
+    if (state && state !== 'down' && state !== 'downLoop') return stand;
+    const sh = (def.downLoop && def.downLoop.shadow) || def.downShadow || null;
+    if (!sh) return stand;
+    const lie = {
+      x: sh.offsetX || 0,
+      y: sh.offsetY || 0,
+      rx: sh.radiusX != null ? sh.radiusX : stand.rx,
+      ry: sh.radiusY != null ? sh.radiusY : stand.ry
+    };
+    let p = opts.progress;
+    if (state === 'downLoop' || p == null) p = 1;
+    if (p <= 0) return stand;
+    const from = sh.from != null ? Math.max(0, Math.min(0.99, sh.from)) : 0.4;
+    const t = Math.max(0, Math.min(1, (p - from) / (1 - from)));
+    const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+    return {
+      x: stand.x + (lie.x - stand.x) * e,
+      y: stand.y + (lie.y - stand.y) * e,
+      rx: stand.rx + (lie.rx - stand.rx) * e,
+      ry: stand.ry + (lie.ry - stand.ry) * e
+    };
+  }
+
+  function drawGroundShadow(ctx, charId, opts) {
+    opts = opts || {};
+    const shape = groundShadowShape(charId, opts);
+    const x = shape.x * (opts.facing === -1 ? -1 : 1);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(x, shape.y, shape.rx, shape.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   function drawCharacter(ctx, charId, state, progress, time, w, h, opts) {
     opts = opts || {};
     const parts = opts.parts || {};
@@ -563,11 +603,8 @@
     if (state === 'hurt') { lean = M.hurtLean * DEG; bob = M.hurtBob; }
     if (state === 'down') { rot = -Math.min(1, progress * 1.4) * Math.PI / 2; alpha = 1 - Math.max(0, progress - 0.7) * 1.2; }
 
-    // 影
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, w * 0.32, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
+    // 影（倒れたときは downLoop.shadow の位置。左右反転は呼び出し側ですでにかかっている）
+    drawGroundShadow(ctx, charId, { state: state, progress: progress, width: w });
 
     ctx.globalAlpha = baseAlpha * Math.max(0.15, alpha);
     // 浮遊（倒れ続けは床に寝ているので浮かせない。states.down.sinkY の分だけ下げる。影は動かさない）
@@ -1060,11 +1097,8 @@
     const ox = cfg.offsetX || 0, oy = cfg.offsetY || 0;
 
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(0, 0, w * 0.32, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.translate(ox, oy + (opts.sinkY || 0)); // 影は床のまま、絵だけ sinkY 下げる
+    drawGroundShadow(ctx, opts.charId, { state: 'downLoop', progress: 1, width: w });
+    ctx.translate(ox, oy + (opts.sinkY || 0)); // 影は sinkY の影響を受けない。絵だけ下げる
     ctx.scale(scale, scale * breath);
     ctx.drawImage(img, -an.x, -an.y);
     ctx.restore();
@@ -1099,4 +1133,6 @@
   window.drawCharacter = drawCharacter;
   window.drawPlaceholder = drawPlaceholder;
   window.drawDownLoopSingle = drawDownLoopSingle;
+  window.groundShadowShape = groundShadowShape;
+  window.drawGroundShadow = drawGroundShadow;
 })();

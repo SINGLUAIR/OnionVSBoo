@@ -80,6 +80,12 @@
  *  breathXSide  : breathSplitX を使うとき、動かす側 'left'（初期値）または 'right'
  *  breathYSide  : breathSplitY を使うとき、動かす側 'upper'（初期値）または 'lower'
  *  画像が1枚も無いときは、倒れる瞬間の最後のコマをそのまま表示し続けます。
+ *  shadow      : （任意）倒れたとき／倒れる途中の地面の影。省略したキャラは従来どおり足元中央のまま。
+ *    offsetX   : 影の中心の横ずれ（画面 px。右向き基準、左向きは自動で反転）。0 = 足元中央
+ *    offsetY   : 影の中心の縦ずれ（画面 px。マイナスで上）。背中が床につく位置に合わせる
+ *    radiusX   : 横半径（省略時は width × 0.32）
+ *    radiusY   : 縦半径（省略時は 10）
+ *    from      : 倒れるアニメのこの割合（0〜1）から影を移動し始める。最後で倒れ続けと同じ位置になる
  */
 window.ASSET_CONFIG = {
   // 画像内のキャラクターが向いている方向（'right' または 'left'）。APNG モードで使います。
@@ -163,7 +169,9 @@ window.ASSET_CONFIG = {
           breathSplitX: 248            // 胴と脚の境（この X より右は動かさない）
         },
         head:  { src: 'assets/sprites/angel/down/head.png',  pivot: { x: 106, y: 279 }, offset: 'auto', scale: 0.5, angle: 0 },
-        arm:   { src: 'assets/sprites/angel/down/arm.png',   pivot: { x: 146, y: 295 }, offset: 'auto', scale: 0.5, angle: 0 }
+        arm:   { src: 'assets/sprites/angel/down/arm.png',   pivot: { x: 146, y: 295 }, offset: 'auto', scale: 0.5, angle: 0 },
+        // 仰向けの背中（胸〜腰）が床につく位置に影を置く。左向きでは offsetX が自動で反転する
+        shadow: { offsetX: -8, offsetY: -32, radiusX: 46, radiusY: 12, from: 0.4 }
       },
       states: {
         idle:     { src: 'assets/sprites/angel/idle.png',   duration: 1000, loop: true },

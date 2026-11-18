@@ -450,7 +450,7 @@
         drawFallFighter(c, this, now, debug);
       } else if (mode === 'apng' && entry && entry.ready) {
         // APNG モード：モーションごとの APNG をそのまま再生
-        drawShadow(c, w);
+        drawShadow(c, w, this, this.state, progress);
         if (this.isFlipped()) c.scale(-1, 1);
         if (windupHold > 0 && CFG.windupExtraLeanDeg) c.rotate(-CFG.windupExtraLeanDeg * windupHold * Math.PI / 180);
         c.drawImage(entry.frameAt(this.stateTime, dur, !!sc.loop), -w / 2, -h, w, h);
@@ -1191,7 +1191,7 @@
     const dur = f.duration('down');
     const progress = Math.max(0, Math.min(1, f.stateTime / dur));
     if (kind === 'frames' || kind === 'apng') {
-      drawShadow(c, w);
+      drawShadow(c, w, f, 'down', progress);
       if (sc.fadeOut) c.globalAlpha *= Math.max(0, 1 - Math.max(0, progress - 0.7) / 0.3);
       if (f.facing === -1) c.scale(-1, 1);
       const seq = kind === 'frames' ? window.SpriteBank.getDownFrames(f.charId) : window.SpriteBank.get(f.charId, 'down');
@@ -1217,7 +1217,7 @@
       const single = window.SpriteBank.getDownLoopSingle(f.charId);
       if (f.facing === -1) c.scale(-1, 1);
       window.drawDownLoopSingle(c, single.img, dl, now, w, h, {
-        debug: debug, flipped: f.facing === -1, stateTime: f.stateTime, sinkY: downSink(f, 1)
+        debug: debug, flipped: f.facing === -1, stateTime: f.stateTime, sinkY: downSink(f, 1), charId: f.charId
       });
       return;
     }
@@ -1238,7 +1238,7 @@
     const last = window.SpriteBank.lastFallFrame(f.charId);
     if (last) {
       const sc = f.def.states.down || {};
-      drawShadow(c, w);
+      drawShadow(c, w, f, 'downLoop', 1);
       if (f.facing === -1) c.scale(-1, 1);
       drawFallFrame(c, last, sc, w, h, debug, downSink(f, 1));
       return;
@@ -1252,7 +1252,11 @@
     });
   }
 
-  function drawShadow(c, w) {
+  function drawShadow(c, w, f, state, progress) {
+    if (window.drawGroundShadow && f) {
+      window.drawGroundShadow(c, f.charId, { width: w, state: state, progress: progress, facing: f.facing });
+      return;
+    }
     c.fillStyle = 'rgba(0,0,0,0.35)';
     c.beginPath(); c.ellipse(0, 0, w * 0.32, 10, 0, 0, Math.PI * 2); c.fill();
   }
