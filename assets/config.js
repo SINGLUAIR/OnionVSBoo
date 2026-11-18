@@ -69,6 +69,16 @@
  *  breathAmp    : 体の呼吸の拡縮幅（scaleY の振幅。初期値 0.02 = ±2%）
  *  breathPeriod : 呼吸1回の長さ（ミリ秒、初期値 2000）
  *  体だけがピボット（体の下端）を軸に縦方向へ拡縮します。頭・翼・腕は完全に静止します。
+ *  （体パーツ、または downLoop に書ける追加項目。省略時は従来どおり画像全体を縦に拡縮）
+ *  breathRegion : 'full'（初期値）/ 'upper' / 'lower' / 'left' / 'right'
+ *                 呼吸する側。境目を軸に拡縮するので、静止側とのあいだに隙間は出ません。
+ *  breathSplit  : 境目の位置。0〜1 なら画像サイズに対する比率、1より大きい値は画像上の px。
+ *                 upper/lower では Y、left/right では X。省略時は 0.5。
+ *  breathSplitX / breathSplitY : もう一方の軸の切り出し（px または比率）。
+ *                 例: 仰向けで脚が右にあるとき、breathRegion:'upper' に breathSplitX を足すと
+ *                 胸側（左・上）だけが動き、脚は完全に静止します。
+ *  breathXSide  : breathSplitX を使うとき、動かす側 'left'（初期値）または 'right'
+ *  breathYSide  : breathSplitY を使うとき、動かす側 'upper'（初期値）または 'lower'
  *  画像が1枚も無いときは、倒れる瞬間の最後のコマをそのまま表示し続けます。
  */
 window.ASSET_CONFIG = {
@@ -132,22 +142,28 @@ window.ASSET_CONFIG = {
         head:  { src: 'assets/sprites/angel/parts/head.png',  pivot: { x: 145, y: 141 }, offset: 'auto', scale: 0.5, angle: 0, variants: { hurt: 'assets/sprites/angel/parts/head_hurt.png', attack: 'assets/sprites/angel/parts/head_attack.png', win: 'assets/sprites/angel/parts/head_win.png' } },
         arm:   { src: 'assets/sprites/angel/parts/arm.png',   pivot: { x: 161, y: 175 }, offset: 'auto', scale: 0.5, angle: 0, restAngle: 34.4 }
       },
-      // 倒れたあとのパーツ（立っているときの parts とは別。おすすめ：4枚とも 400×240px、下端中央が床）
+      // 倒れたあとのパーツ（400×400px のキャンバス全体で書き出し。倒れる APNG と同じキャンバスで、下端中央が床）
+      // 各パーツは描いた位置のまま重なるよう、ピボットも同じキャンバス上の座標で指定。
       downLoop: {
         mode: 'parts',                 // 'parts' = 下の4パーツ、'single' = src（down/loop.png）の1枚絵
         // src: 'assets/sprites/angel/down/loop.png',
-        canvasAnchor: { x: 200, y: 240 },
-        order: ['wings', 'body', 'head', 'arm'],
-        breathAmp: 0.02,               // 体の呼吸の拡縮幅（scaleY の振幅）
+        canvasAnchor: { x: 200, y: 400 },
+        order: ['wings', 'body', 'arm', 'head'],
+        breathAmp: 0.08,               // 胸だけの呼吸なので、全体拡縮より少し大きめ（画面上で約 2〜3px）
         breathPeriod: 2000,            // 呼吸1回の長さ（ミリ秒）
         wings: {
-          src: 'assets/sprites/angel/down/wings.png', pivot: { x: 140, y: 160 }, offset: 'auto', scale: 0.5, angle: 0,
-          mirror: true,
-          mirrorAxisX: 200
+          src: 'assets/sprites/angel/down/wings.png', pivot: { x: 200, y: 300 }, offset: 'auto', scale: 0.5, angle: 0
+          // 倒れ絵の翼は両側が1枚に描いてあるので、mirror はしない
         },
-        body:  { src: 'assets/sprites/angel/down/body.png',  pivot: { x: 200, y: 240 }, offset: 'auto', scale: 0.5, angle: 0 },
-        head:  { src: 'assets/sprites/angel/down/head.png',  pivot: { x: 200, y: 105 }, offset: 'auto', scale: 0.5, angle: 0 },
-        arm:   { src: 'assets/sprites/angel/down/arm.png',   pivot: { x: 280, y: 200 }, offset: 'auto', scale: 0.5, angle: 0 }
+        body:  {
+          src: 'assets/sprites/angel/down/body.png',  pivot: { x: 180, y: 280 }, offset: 'auto', scale: 0.5, angle: 0,
+          // 仰向け（頭が左・脚が右）。胸＝画像の左上だけを、境目を軸に上下へ拡縮。脚とスカート下は静止
+          breathRegion: 'upper',
+          breathSplit: 280,            // 胸とスカート／脚の境（画像上の Y、px）
+          breathSplitX: 248            // 胴と脚の境（この X より右は動かさない）
+        },
+        head:  { src: 'assets/sprites/angel/down/head.png',  pivot: { x: 106, y: 279 }, offset: 'auto', scale: 0.5, angle: 0 },
+        arm:   { src: 'assets/sprites/angel/down/arm.png',   pivot: { x: 146, y: 295 }, offset: 'auto', scale: 0.5, angle: 0 }
       },
       states: {
         idle:     { src: 'assets/sprites/angel/idle.png',   duration: 1000, loop: true },

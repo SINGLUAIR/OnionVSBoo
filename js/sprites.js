@@ -658,6 +658,113 @@
       return 1 + Math.sin((t / Math.max(1, period)) * Math.PI * 2) * amp;
     }
 
+    // 0〜1 は画像サイズに対する比率、1より大きい値は画像上の px
+    function resolveBreathSplit(val, size) {
+      if (val == null || val === '') return null;
+      const n = Number(val);
+      if (!isFinite(n)) return null;
+      if (n >= 0 && n <= 1) return n * size;
+      return n;
+    }
+
+    // 倒れ続けの体だけ：breathRegion で呼吸する範囲を切り出せる（省略時は従来どおり画像全体を縦に拡縮）
+    //  body パーツ（なければ downLoop）の breathRegion / breathSplit / breathSplitX / breathSplitY / breathXSide / breathYSide
+    function bodyBreathRegion(img) {
+      const c = (parts.body && parts.body.cfg) || pconf.body || {};
+      const region = c.breathRegion || pconf.breathRegion || 'full';
+      if (!region || region === 'full') return null;
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const splitVal = c.breathSplit != null ? c.breathSplit : pconf.breathSplit;
+      let splitX = resolveBreathSplit(c.breathSplitX != null ? c.breathSplitX : pconf.breathSplitX, w);
+      let splitY = resolveBreathSplit(c.breathSplitY != null ? c.breathSplitY : pconf.breathSplitY, h);
+      if ((region === 'upper' || region === 'lower') && splitY == null) {
+        splitY = resolveBreathSplit(splitVal != null ? splitVal : 0.5, h);
+      }
+      if ((region === 'left' || region === 'right') && splitX == null) {
+        splitX = resolveBreathSplit(splitVal != null ? splitVal : 0.5, w);
+      }
+      const xSide = c.breathXSide || pconf.breathXSide || 'left';
+      const ySide = c.breathYSide || pconf.breathYSide || 'upper';
+      return { region: region, splitX: splitX, splitY: splitY, w: w, h: h, xSide: xSide, ySide: ySide };
+    }
+
+    // 境目の線を軸に拡縮するので、静止側とのあいだに隙間も重なりも出ない
+    function drawBreathingBody(img, pl, breath, ro) {
+      const s = pl.scale;
+      const px = pl.pivot.x, py = pl.pivot.y;
+      const W = ro.w, H = ro.h;
+      applyTint(pl.tint);
+
+      function drawStatic(ix, iy, iw, ih) {
+        if (iw <= 0.5 || ih <= 0.5) return;
+        ctx.save();
+        ctx.scale(s, s);
+        ctx.drawImage(img, ix, iy, iw, ih, -px + ix, -py + iy, iw, ih);
+        ctx.restore();
+      }
+      function drawScaleY(ix, iy, iw, ih, seamY, amp) {
+        if (iw <= 0.5 || ih <= 0.5) return;
+        ctx.save();
+        ctx.translate(0, (seamY - py) * s);
+        ctx.scale(s, s * amp);
+        ctx.translate(0, -(seamY - py));
+        ctx.drawImage(img, ix, iy, iw, ih, -px + ix, -py + iy, iw, ih);
+        ctx.restore();
+      }
+      function drawScaleX(ix, iy, iw, ih, seamX, amp) {
+        if (iw <= 0.5 || ih <= 0.5) return;
+        ctx.save();
+        ctx.translate((seamX - px) * s, 0);
+        ctx.scale(s * amp, s);
+        ctx.translate(-(seamX - px), 0);
+        ctx.drawImage(img, ix, iy, iw, ih, -px + ix, -py + iy, iw, ih);
+        ctx.restore();
+      }
+
+      if (ro.region === 'upper' || ro.region === 'lower') {
+        const seam = ro.splitY;
+        const movingUpper = ro.region === 'upper';
+        if (movingUpper) drawStatic(0, seam, W, H - seam);
+        else drawStatic(0, 0, W, seam);
+        let mx0 = 0, mw = W;
+        if (ro.splitX != null) {
+          if (ro.xSide === 'right') {
+            if (movingUpper) drawStatic(0, 0, ro.splitX, seam);
+            else drawStatic(0, seam, ro.splitX, H - seam);
+            mx0 = ro.splitX; mw = W - ro.splitX;
+          } else {
+            if (movingUpper) drawStatic(ro.splitX, 0, W - ro.splitX, seam);
+            else drawStatic(ro.splitX, seam, W - ro.splitX, H - seam);
+            mx0 = 0; mw = ro.splitX;
+          }
+        }
+        if (movingUpper) drawScaleY(mx0, 0, mw, seam, seam, breath);
+        else drawScaleY(mx0, seam, mw, H - seam, seam, breath);
+        return;
+      }
+
+      if (ro.region === 'left' || ro.region === 'right') {
+        const seam = ro.splitX;
+        const movingLeft = ro.region === 'left';
+        if (movingLeft) drawStatic(seam, 0, W - seam, H);
+        else drawStatic(0, 0, seam, H);
+        let my0 = 0, mh = H;
+        if (ro.splitY != null) {
+          if (ro.ySide === 'lower') {
+            if (movingLeft) drawStatic(0, 0, seam, ro.splitY);
+            else drawStatic(seam, 0, W - seam, ro.splitY);
+            my0 = ro.splitY; mh = H - ro.splitY;
+          } else {
+            if (movingLeft) drawStatic(0, ro.splitY, seam, H - ro.splitY);
+            else drawStatic(seam, ro.splitY, W - seam, H - ro.splitY);
+            my0 = 0; mh = ro.splitY;
+          }
+        }
+        if (movingLeft) drawScaleX(0, my0, seam, mh, seam, breath);
+        else drawScaleX(seam, my0, W - seam, mh, seam, breath);
+      }
+    }
+
     function drawImagePart(name, mirrored) {
       const img = partImage(name);
       if (!img) return;
@@ -665,11 +772,17 @@
       ctx.save();
       ctx.translate(pl.x, pl.y);
       ctx.rotate(pl.angle);
-      const sy = (state === 'downLoop' && name === 'body') ? pl.scale * breathScaleY() : pl.scale;
-      ctx.scale(pl.scale, sy);
-      if (mirrored) ctx.scale(-1, 1);
-      applyTint(pl.tint);
-      ctx.drawImage(img, -pl.pivot.x, -pl.pivot.y);
+      const doBreath = (state === 'downLoop' && name === 'body' && !mirrored);
+      const region = doBreath ? bodyBreathRegion(img) : null;
+      if (doBreath && region) {
+        drawBreathingBody(img, pl, breathScaleY(), region);
+      } else {
+        const sy = doBreath ? pl.scale * breathScaleY() : pl.scale;
+        ctx.scale(pl.scale, sy);
+        if (mirrored) ctx.scale(-1, 1);
+        applyTint(pl.tint);
+        ctx.drawImage(img, -pl.pivot.x, -pl.pivot.y);
+      }
       ctx.restore();
     }
 
