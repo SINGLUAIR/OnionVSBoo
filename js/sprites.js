@@ -22,6 +22,22 @@
 (function () {
   'use strict';
 
+  // index.html の ?v= を画像の読み込みにも付けて、GitHub Pages の 10分キャッシュで古い画像が残らないようにする
+  function cacheBust(src) {
+    if (!src || src.indexOf('data:') === 0 || src.indexOf('blob:') === 0) return src;
+    try {
+      const scripts = document.getElementsByTagName('script');
+      let v = '';
+      for (let i = 0; i < scripts.length; i++) {
+        const m = (scripts[i].src || '').match(/[?&]v=([^&]+)/);
+        if (m) { v = decodeURIComponent(m[1]); break; }
+      }
+      if (!v) return src;
+      return src + (src.indexOf('?') >= 0 ? '&' : '?') + 'v=' + encodeURIComponent(v);
+    } catch (e) { return src; }
+  }
+  window.cacheBust = cacheBust;
+
   // ---------------- APNG 解析 ----------------
   const CRC_TABLE = (function () {
     const t = new Uint32Array(256);
@@ -151,7 +167,7 @@
     load() {
       const src = this.cfg && this.cfg.src;
       if (!src || typeof fetch !== 'function') return Promise.resolve(false);
-      return fetch(src)
+      return fetch(cacheBust(src))
         .then((res) => { if (!res.ok) throw new Error('not found'); return res.arrayBuffer(); })
         .then((buf) => {
           const parsed = parsePng(buf);
@@ -200,7 +216,7 @@
       const img = new Image();
       img.onload = () => resolve(img.naturalWidth > 0 ? img : null);
       img.onerror = () => resolve(null);
-      img.src = src;
+      img.src = cacheBust(src);
     });
   }
 
@@ -518,6 +534,27 @@
     return 1 + 0.12 * Math.sin(Math.PI * Math.min(1, t * 1.6)) * (1 - t * 0.5);
   }
 
+  // 突き（槍）の踏み込み 0〜1：ためている間は 0、判定の直前に一気に 1、少し残してから戻る
+  function thrustDrive(p, hitAt) {
+    if (hitAt >= 1) return p;
+    if (p < hitAt) {
+      const t = p / hitAt;
+      if (t <= 0.78) return 0;
+      const s = (t - 0.78) / 0.22;
+      return s * s;
+    }
+    const t = (p - hitAt) / (1 - hitAt);
+    if (t < 0.35) return 1;
+    const r = (t - 0.35) / 0.65;
+    return 1 - r * r * (3 - 2 * r);
+  }
+  // 構え（腕を前へ向ける）0〜1：攻撃の最初で構え、最後に戻す
+  function readyPose(p, hitAt) {
+    if (p < hitAt) return Math.min(1, (p / Math.max(0.01, hitAt)) / 0.25);
+    const t = (p - hitAt) / Math.max(0.01, 1 - hitAt);
+    return t < 0.5 ? 1 : 1 - (t - 0.5) / 0.5;
+  }
+
   function motionCfg() {
     const m = (window.ASSET_CONFIG && window.ASSET_CONFIG.motion) || {};
     return Object.assign({}, DEFAULT_MOTION, m);
@@ -577,8 +614,10 @@
     opts = opts || {};
     const parts = opts.parts || {};
     const pconf = opts.partsConfig || {};
-    const M = motionCfg();
-    const isAngel = charId === 'angel';
+    const M = Object.assign(motionCfg(), opts.motion || {});
+    const cdef = (window.ASSET_CONFIG && window.ASSET_CONFIG.characters && window.ASSET_CONFIG.characters[charId]) || {};
+    const isAngel = (cdef.uiTheme || (charId === 'lucifer' ? 'lucifer' : 'angel')) === 'angel';
+    const wMotion = opts.weaponMotion || 'swing';
     const body = isAngel ? '#fff6dc' : '#4a1670';
     const body2 = isAngel ? '#e8c45a' : '#1c0630';
     const wing = isAngel ? 'rgba(255,255,255,0.92)' : 'rgba(20,6,30,0.95)';
@@ -591,16 +630,21 @@
     // 攻撃の振り：判定のタイミング（hitAt）で振り下ろしが終わり、残りは振り抜いた後の余韻
     const hitAt = opts.hitAt != null ? opts.hitAt : 1;
     const swing = state === 'attack' ? attackSwing(progress, hitAt) : 0;
+    const drive = state === 'attack' && wMotion === 'thrust' ? thrustDrive(progress, hitAt) : 0;
+    const ready = state === 'attack' && (wMotion === 'thrust' || wMotion === 'cast') ? readyPose(progress, hitAt) : 0;
     if (state === 'idle' || state === 'win') { bob = Math.sin(time * M.idleBobSpeed) * M.idleBob; }
     if (state === 'move') { bob = Math.sin(time * M.moveBobSpeed) * M.moveBob; lean = M.moveLean * DEG; flapSpeed = M.moveFlapSpeed; }
     if (state === 'attack') {
-      lean = (M.attackLeanFrom + (M.attackLeanTo - M.attackLeanFrom) * swing) * DEG;
+      if (wMotion === 'thrust') lean = (-5 + 13 * drive) * DEG;           // 槍：少し反って構え、突きで前のめり
+      else if (wMotion === 'cast') lean = (-6 * ready + (progress >= hitAt ? 8 * ready : 0)) * DEG; // 魔法：反ってため、発動で前へ
+      else lean = (M.attackLeanFrom + (M.attackLeanTo - M.attackLeanFrom) * swing) * DEG;
       // 予備動作中の追加後傾（左右反転後のローカル空間なので向きを気にしなくてよい）
       if (opts.windupHold > 0 && opts.windupExtraLeanDeg) {
         lean -= opts.windupExtraLeanDeg * opts.windupHold * DEG;
       }
     }
     if (state === 'hurt') { lean = M.hurtLean * DEG; bob = M.hurtBob; }
+    if (opts.velLeanDeg && state === 'move') lean += opts.velLeanDeg * DEG; // 飛行：速度に合わせた傾き
     if (state === 'down') { rot = -Math.min(1, progress * 1.4) * Math.PI / 2; alpha = 1 - Math.max(0, progress - 0.7) * 1.2; }
 
     // 影（倒れたときは downLoop.shadow の位置。左右反転は呼び出し側ですでにかかっている）
@@ -610,6 +654,7 @@
     // 浮遊（倒れ続けは床に寝ているので浮かせない。states.down.sinkY の分だけ下げる。影は動かさない）
     const floatY = (state === 'downLoop') ? (opts.sinkY || 0) : (-M.floatHeight + bob);
     ctx.translate(0, floatY);
+    if (drive > 0 && opts.thrustPx) ctx.translate(opts.thrustPx * drive, 0); // 槍：突きで体ごと前へ
     if (state === 'down') {
       // 倒れる APNG／コマ送りが無いときだけ使われる（仮の図形の倒れ方）
       ctx.translate(-w * 0.1, 10);
@@ -625,7 +670,11 @@
     // 各パーツの「付け根（ピボットを置く位置）」と角度（仮の図形と共通）
     const flap = (state === 'downLoop') ? 0 : Math.sin(time * flapSpeed) * M.wingFlap * DEG;
     let armAngle = M.idleArm * DEG;
-    if (state === 'attack') armAngle = (M.attackArmFrom + (M.attackArmTo - M.attackArmFrom) * swing) * DEG; // 振りかぶり → 振り下ろし
+    if (state === 'attack') {
+      if (wMotion === 'thrust') armAngle = (M.idleArm + ((M.thrustArm != null ? M.thrustArm : 0) - M.idleArm) * ready) * DEG; // 槍：腕を水平に構えて突く
+      else if (wMotion === 'cast') armAngle = (M.idleArm + ((progress < hitAt ? (M.castArm != null ? M.castArm : -60) : 0) - M.idleArm) * ready) * DEG; // 魔法：掲げて、発動で前へ
+      else armAngle = (M.attackArmFrom + (M.attackArmTo - M.attackArmFrom) * swing) * DEG; // 剣・投擲：振りかぶり → 振り下ろし
+    }
     if (state === 'hurt') armAngle = M.hurtArm * DEG;
     const joints = {
       wings: { x: -bw * 0.2, y: -bh * 0.7 },
@@ -1044,14 +1093,47 @@
     const slashLen = Math.max(0.05, 1 - M.slashFrom);
     const slashStart = (G.slashFollowsHit !== false && hitAt < 1) ? Math.max(0, hitAt - 0.04) : M.slashFrom;
     const slashEnd = Math.min(1, slashStart + slashLen);
-    if (state === 'attack' && progress > slashStart && progress <= slashEnd) {
+    const sc = opts.slashColor || (isAngel ? '255,240,150' : '200,60,255');
+    if (state === 'attack' && wMotion === 'swing' && progress > slashStart && progress <= slashEnd) {
       const a = (progress - slashStart) / (slashEnd - slashStart);
       ctx.save();
-      ctx.strokeStyle = isAngel ? 'rgba(255,240,150,' + (1 - a * 0.5) + ')' : 'rgba(200,60,255,' + (1 - a * 0.5) + ')';
+      ctx.strokeStyle = 'rgba(' + sc + ',' + (1 - a * 0.5) + ')';
       ctx.lineWidth = 8;
       ctx.beginPath();
       ctx.arc(w * 0.3, -h * 0.5, w * 0.45, -1.1, 1.1);
       ctx.stroke();
+      ctx.restore();
+    }
+    // 槍：突きの軌跡（正面へまっすぐの細い光）
+    if (state === 'attack' && wMotion === 'thrust' && progress > slashStart && progress <= slashEnd) {
+      const a = (progress - slashStart) / (slashEnd - slashStart);
+      const y = -h * 0.56 + (-M.floatHeight);
+      const x0 = w * 0.18 + (opts.thrustPx || 0) * drive, x1 = x0 + w * 0.72;
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const g = ctx.createLinearGradient(x0, 0, x1, 0);
+      g.addColorStop(0, 'rgba(' + sc + ',0)');
+      g.addColorStop(0.7, 'rgba(' + sc + ',' + (0.9 * (1 - a)) + ')');
+      g.addColorStop(1, 'rgba(255,255,255,' + (1 - a) + ')');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(x0, y - 5); ctx.lineTo(x1, y); ctx.lineTo(x0, y + 5); ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    // 魔法：詠唱中、掲げた手の先に光がたまる
+    if (state === 'attack' && wMotion === 'cast' && progress < hitAt + 0.05) {
+      const k = Math.min(1, progress / Math.max(0.01, hitAt));
+      const hx = w * 0.22, hy = -h * 0.92 + (-M.floatHeight);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const r = 6 + 16 * k;
+      const g = ctx.createRadialGradient(hx, hy, 1, hx, hy, r * 1.8);
+      g.addColorStop(0, 'rgba(255,255,255,' + (0.5 + 0.5 * k) + ')');
+      g.addColorStop(0.35, 'rgba(' + sc + ',' + (0.7 * k + 0.2) + ')');
+      g.addColorStop(1, 'rgba(' + sc + ',0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(hx, hy, r * 1.8, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 

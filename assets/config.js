@@ -119,6 +119,12 @@ window.ASSET_CONFIG = {
   characters: {
     angel: {
       name: '熾天使ルシファー',
+      // 性能型（js/config.js の weaponTypes / moveTypes）。剣 × 飛行
+      weaponType: 'sword',
+      moveType: 'fly',
+      uiTheme: 'angel',
+      selectNote: 'ライフ2以下で<br>速度アップ',
+      colors: { aura: '255,230,120', flash: '255,230,150', hit: '255,240,150', slash: '255,240,150', buffGlow: '130,160,255', buffText: '#cfe0ff' },
       mode: 'parts',
       // 画面上のキャラの大きさ（px, 960x540 基準）。当たり判定や倒れる APNG（scale: null のとき）の基準になります。
       width: 140,
@@ -183,7 +189,8 @@ window.ASSET_CONFIG = {
         down:     {
           type: 'apng',                // 'apng' | 'frames'（切り替えるだけ）
           src: 'assets/sprites/angel/down.png',
-          duration: 900, loop: false, scale: 0.5, offsetX: 0, offsetY: 0, fadeOut: false
+          duration: 1420, loop: false, scale: 0.5, offsetX: 0, offsetY: 0, fadeOut: false
+          // duration は APNG 本来の長さ（1.42秒）。900 だと最後の着地コマが短く、体が下がって見える切り替わりが飛びやすい
           // コマ送りに切り替えるとき：type を 'frames' にして、次の行のコメントを外す
           // , frames: ['assets/sprites/angel/down_1.png', 'assets/sprites/angel/down_2.png', 'assets/sprites/angel/down_3.png', 'assets/sprites/angel/down_4.png', 'assets/sprites/angel/down_5.png'], frameMs: 100
         }
@@ -191,6 +198,12 @@ window.ASSET_CONFIG = {
     },
     lucifer: {
       name: '堕天使ルシファー',
+      // 性能型（js/config.js の weaponTypes / moveTypes）。剣 × 飛行
+      weaponType: 'sword',
+      moveType: 'fly',
+      uiTheme: 'lucifer',
+      selectNote: 'ライフ4以上で<br>速度アップ',
+      colors: { aura: '170,60,255', flash: '255,80,70', hit: '200,80,255', slash: '200,60,255', buffGlow: '255,120,40', buffText: '#ffcf8a' },
       mode: 'parts',
       width: 150,
       height: 190,

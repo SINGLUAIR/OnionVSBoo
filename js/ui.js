@@ -17,7 +17,7 @@
     if (logo.maxHeight) img.style.maxHeight = logo.maxHeight + 'px';
     img.onload = () => { img.hidden = false; wrap.classList.add('has-image'); };
     img.onerror = () => { img.hidden = true; wrap.classList.remove('has-image'); };
-    img.src = logo.src;
+    img.src = (window.cacheBust ? window.cacheBust(logo.src) : logo.src);
   })();
 
   // ---- キャラ選択ボタンの顔 ----
@@ -78,7 +78,7 @@
       icon.classList.add('has-face');
     };
     img.onerror = () => { /* 画像が無ければ光の玉のまま */ };
-    img.src = headSrc;
+    img.src = (window.cacheBust ? window.cacheBust(headSrc) : headSrc);
   }
   document.querySelectorAll('.char-btn').forEach(setupFace);
 })();

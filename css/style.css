@@ -163,6 +163,56 @@ html, body {
 .char-btn.lucifer .char-name { text-shadow: 0 0 2px #000, 0 2px 0 #000, 0 0 12px rgba(255,90,40,.9); }
 .char-btn .char-note { font-size: 13px; color: #e9dcc0; line-height: 1.45; text-shadow: 0 1px 2px #000; }
 
+/* ---------- キャラ選択（あなた／あいて の2列。ボタンは js/game.js が自動で作る） ---------- */
+.select-wrap { display: flex; align-items: center; gap: 14px; }
+.select-side { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.select-label {
+  font-size: 15px; font-weight: 800; letter-spacing: 6px; color: var(--gold-1);
+  text-shadow: 0 0 2px #000, 0 1px 0 #000, 0 0 8px rgba(255,200,90,.6);
+}
+.select-vs {
+  font-family: var(--serif-en); font-weight: 900; font-size: 30px; color: var(--gold-1); margin-top: 20px;
+  text-shadow: 0 0 2px #000, 0 2px 0 #000, 0 0 12px rgba(255,200,90,.7);
+}
+.select-wrap .char-select {
+  gap: 10px; flex-wrap: wrap; justify-content: center; max-width: 430px;
+  max-height: 200px; overflow-y: auto; padding: 8px 4px 4px; scrollbar-width: thin; position: relative;
+}
+.select-wrap .char-btn { width: 132px; padding: 12px 6px 10px; gap: 3px; --cut: 12px; touch-action: manipulation; }
+.select-wrap .char-portrait { width: 66px; height: 66px; padding: 3px; }
+.select-wrap .char-portrait::before, .select-wrap .char-portrait::after { width: 11px; height: 11px; margin-left: -5.5px; }
+.select-wrap .char-portrait::before { top: -8px; }
+.select-wrap .char-portrait::after { bottom: -8px; }
+.select-wrap .char-btn .char-name { margin-top: 5px; font-size: 13.5px; letter-spacing: 0; white-space: nowrap; }
+.select-wrap .char-btn .char-note { font-size: 11px; line-height: 1.3; }
+.char-btn .char-type {
+  font-size: 11.5px; font-weight: 800; color: var(--gold-1); letter-spacing: 1px;
+  padding: 0 8px; border-top: 1px solid rgba(246,215,122,.45); border-bottom: 1px solid rgba(246,215,122,.45);
+  text-shadow: 0 1px 2px #000;
+}
+/* キャラが多いとき（片側4つ以上）は小さいボタンで並べる。さらに多いときは枠の中をスクロール */
+.select-wrap .char-select.compact { gap: 7px; max-height: 236px; }
+.select-wrap .compact .char-btn { width: 99px; padding: 10px 4px 8px; --cut: 10px; }
+.select-wrap .compact .char-portrait { width: 50px; height: 50px; }
+.select-wrap .compact .char-btn .char-name { font-size: 11px; margin-top: 3px; }
+.select-wrap .compact .char-btn .char-type { font-size: 10px; padding: 0 4px; letter-spacing: 0; }
+.select-wrap .compact .char-btn .char-note { display: none; }
+.select-wrap .compact .random-mark { font-size: 30px; }
+/* ランダム */
+.char-btn.random {
+  --frame-fill:
+    radial-gradient(ellipse at 50% 38%, rgba(255,210,120,.28) 0%, rgba(255,210,120,0) 60%),
+    linear-gradient(90deg, #13308a 0%, #1a0a1e 50%, #7a0a10 100%);
+}
+.char-btn.random.selected { filter: drop-shadow(0 0 10px rgba(255,210,110,.9)) drop-shadow(0 0 22px rgba(255,200,90,.5)); }
+.char-btn.random .char-icon { background: radial-gradient(circle at 50% 45%, #3a2a50 0%, #120a1a 70%); display: flex; align-items: center; justify-content: center; }
+.random-mark {
+  font-family: var(--serif-en); font-weight: 900; font-size: 38px; line-height: 1; color: var(--gold-1);
+  text-shadow: 0 0 2px #000, 0 2px 0 var(--gold-4), 0 0 10px rgba(255,200,90,.8);
+}
+#title-screen { gap: 9px; }
+#title-screen .game-title { font-size: 44px; }
+
 /* ---------- ボタン ---------- */
 .main-btn, .sub-btn {
   --frame-shape: var(--pointed);

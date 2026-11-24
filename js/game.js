@@ -7,7 +7,77 @@
   const W = 960, H = 540;
   const CFG = window.GAME_CONFIG;
   const ASSETS = window.ASSET_CONFIG;
-  const CHAR_IDS = ['angel', 'lucifer'];
+  // キャラの一覧は assets/config.js の characters から自動で作る（ボタンも自動生成）
+  const CHAR_IDS = Object.keys(ASSETS.characters || {});
+
+  // ------------------------------------------------------------
+  // 性能型（js/config.js の weaponTypes / moveTypes ＋ キャラごとの上書き）
+  // ------------------------------------------------------------
+  function mergeType(base, over) {
+    const out = Object.assign({}, base || {});
+    Object.keys(over || {}).forEach((k) => {
+      const v = over[k];
+      if (v && typeof v === 'object' && !Array.isArray(v) && out[k] && typeof out[k] === 'object') out[k] = Object.assign({}, out[k], v);
+      else out[k] = v;
+    });
+    return out;
+  }
+  function resolveWeapon(def) {
+    const types = CFG.weaponTypes || {};
+    // 特殊な型（例：ドラゴンの 'breath'）：weaponTypes に無い名前でも、weapon.base の型をもとに weapon の値で作れる
+    let key = def.weaponType || 'sword';
+    let base = types[key];
+    if (!base) base = types[(def.weapon && def.weapon.base) || 'sword'] || { kind: 'melee', motion: 'swing' };
+    const w = mergeType(base, def.weapon);
+    w.type = key;
+    return w;
+  }
+  function resolveMove(def) {
+    const types = CFG.moveTypes || {};
+    const key = def.moveType || 'fly';
+    const fallback = { maxSpeedX: CFG.moveSpeedX, maxSpeedY: CFG.moveSpeedY, accel: 99999, brake: 99999, lifeBonus: 0, hurtStunMult: 1 };
+    const base = types[key] || types[(def.move && def.move.base) || 'fly'] || fallback;
+    const m = mergeType(base, def.move);
+    m.type = key;
+    return m;
+  }
+  // キャラの配色（HUD・ボタン）。uiTheme が無いときは id、それも無ければ天使側
+  function themeOf(charId) {
+    const d = ASSETS.characters[charId] || {};
+    return d.uiTheme || (charId === 'lucifer' ? 'lucifer' : 'angel');
+  }
+  const DEFAULT_COLORS = {
+    angel:   { aura: '255,230,120', flash: '255,230,150', hit: '255,240,150', slash: '255,240,150', buffGlow: '130,160,255', buffText: '#cfe0ff' },
+    lucifer: { aura: '170,60,255',  flash: '255,80,70',   hit: '200,80,255',  slash: '200,60,255',  buffGlow: '255,120,40',  buffText: '#ffcf8a' }
+  };
+  function colorsOf(charId) {
+    const d = ASSETS.characters[charId] || {};
+    return Object.assign({}, DEFAULT_COLORS[themeOf(charId)] || DEFAULT_COLORS.angel, d.colors || {});
+  }
+  window.CharTypes = { resolveWeapon: resolveWeapon, resolveMove: resolveMove, colorsOf: colorsOf, themeOf: themeOf };
+
+  // 見た目の動きの上書き（移動の型の motion → キャラの motion の順に、assets/config.js の motion へ重ねる）
+  const motionOverrideCache = {};
+  function motionOverrideOf(charId) {
+    if (!motionOverrideCache[charId]) {
+      const d = ASSETS.characters[charId] || {};
+      motionOverrideCache[charId] = Object.assign({}, resolveMove(d).motion || {}, d.motion || {});
+    }
+    return motionOverrideCache[charId];
+  }
+
+  // 任意の画像（弾・魔法陣の sprite）。読めないときは null のまま＝図形で描く
+  const optImages = {};
+  function optImage(src) {
+    if (!src) return null;
+    if (!(src in optImages)) {
+      optImages[src] = null;
+      const im = new Image();
+      im.onload = () => { optImages[src] = im; };
+      im.src = window.cacheBust ? window.cacheBust(src) : src;
+    }
+    return optImages[src];
+  }
 
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
@@ -110,7 +180,7 @@
       const im = new Image();
       im.onload = () => { imgs[k] = im; rebuild(); };
       im.onerror = () => console.warn('背景画像を読み込めませんでした: ' + bg[k]);
-      im.src = bg[k];
+      im.src = (window.cacheBust ? window.cacheBust(bg[k]) : bg[k]);
     });
   })();
 
@@ -131,13 +201,18 @@
       this.charId = charId;
       this.isPlayer = isPlayer;
       this.def = ASSETS.characters[charId];
+      this.weapon = resolveWeapon(this.def);   // 武器の型（剣・槍・投擲・魔法）
+      this.mv = resolveMove(this.def);         // 移動の型（飛行・歩行）
+      this.colors = colorsOf(charId);
+      this.maxLife = Math.max(1, CFG.maxLife + (this.mv.lifeBonus || 0) + (this.def.lifeBonus || 0));
       this.reset(isPlayer ? 250 : 710, 420);
     }
 
     reset(x, y) {
       this.x = x; this.y = y;
       this.facing = this.isPlayer ? 1 : -1; // 1 = 右, -1 = 左
-      this.life = CFG.maxLife;
+      this.life = this.maxLife;
+      this.vx = 0; this.vy = 0;     // 移動の速度（px/秒）。加速・減速で変わる
       this.state = 'idle';
       this.stateTime = 0;
       this.invulnUntil = 0;
@@ -154,7 +229,7 @@
     }
 
     get buff() {
-      const b = CFG.buffs[this.charId];
+      const b = this.def.buff || (CFG.buffs || {})[this.charId];
       if (!b) return null;
       const on = b.condition === 'lifeAtMost' ? this.life <= b.threshold : this.life >= b.threshold;
       return on && this.life > 0 ? b : null;
@@ -167,6 +242,7 @@
       if (state === 'down') return window.SpriteBank.downDuration(this.charId);
       if (state === 'attack') return this.attackTiming().total;
       if (state === 'move') return st.move.duration / this.moveMult;   // 移動速度アップ中は移動モーションも速く
+      if (state === 'hurt') return ((st.hurt && st.hurt.duration) || 500) * (this.mv.hurtStunMult || 1); // 重量級は被ダメ硬直が短い
       return (st[state] && st[state].duration) || 500;
     }
 
@@ -182,9 +258,10 @@
       const mult = this.attackStartMult != null ? this.attackStartMult : this.attackMult;
       const base = st.attack.duration / mult;
       const frac = this.hitAt;
-      const windup = (CFG.attackWindupMs || 0) / mult;
+      const wu = this.weapon.windupMs != null ? this.weapon.windupMs : CFG.attackWindupMs;
+      const windup = (wu || 0) / mult;
       const hit = Math.max(windup, base * frac);
-      const follow = base * (1 - frac);
+      const follow = base * (1 - frac) * (this.weapon.followMult != null ? this.weapon.followMult : 1);
       const total = hit + follow;
       return { base: base, hit: hit, follow: follow, total: total, progress: total > 0 ? hit / total : frac };
     }
@@ -226,12 +303,26 @@
       const flipped = this.isFlipped();
       const l = flipped ? ins.right : ins.left;
       const rr = flipped ? ins.left : ins.right;
-      return { x: r.x + l, y: r.y + ins.top, w: r.w - l - rr, h: r.h - ins.top - ins.bottom };
+      const b = { x: r.x + l, y: r.y + ins.top, w: r.w - l - rr, h: r.h - ins.top - ins.bottom };
+      // （任意）やられ判定の倍率 hurtboxScale: { x, y }。足元中央を基準に広げる（ドラゴンなど大きいキャラ用）
+      const hs = this.def.hurtboxScale;
+      if (hs) {
+        const sx = hs.x != null ? hs.x : 1, sy = hs.y != null ? hs.y : 1;
+        const cx = b.x + b.w / 2, bottom = b.y + b.h;
+        b.w *= sx; b.h *= sy; b.x = cx - b.w / 2; b.y = bottom - b.h;
+      }
+      return b;
     }
+
+    // 近接攻撃の判定の大きさ（キャラの attackBox が優先、無ければ武器の型の値）
+    get attackBox() { return this.def.attackBox || this.weapon.attackBox || { near: 10, reach: 90, top: 150, bottom: 40 }; }
+    // 当たる奥行きの差の許容値（武器の型ごと）
+    get depthTol() { return this.weapon.depthTolerance != null ? this.weapon.depthTolerance : CFG.depthTolerance; }
+    get isMelee() { return (this.weapon.kind || 'melee') === 'melee'; }
 
     // 攻撃判定（向いている側のみ）
     attackRect() {
-      const a = this.def.attackBox;
+      const a = this.attackBox;
       const x = this.facing === 1 ? this.x + a.near : this.x - a.near - a.reach;
       return { x: x, y: this.y - a.top, w: a.reach, h: a.top - a.bottom };
     }
@@ -276,16 +367,24 @@
         // 予備動作 → 判定（hitAt の位置で1回だけ） → 戻り
         if (!this.hitDone && this.stateTime >= this.hitTime()) {
           this.hitDone = true;
-          this.lastSwingHit = game.resolveAttack(this, opp);
+          const kind = this.weapon.kind || 'melee';
+          if (kind === 'projectile') { game.spawnProjectile(this); this.lastSwingHit = false; }
+          else if (kind === 'area') { game.triggerArea(this); this.lastSwingHit = false; }
+          else this.lastSwingHit = game.resolveAttack(this, opp);
           if (this.state !== 'attack') return; // KO で勝利ポーズになった
         }
         if (this.stateTime >= this.duration('attack')) {
           const mult = this.attackStartMult || this.attackMult;
           const hit = this.lastSwingHit;
           // 空振りなら（戻りの動作のあとに）硬直（移動・攻撃不可）。待ち時間は硬直が終わってから数える。プレイヤー・NPC 共通
-          const recover = hit ? 0 : (CFG.whiffRecoveryMs || 0) / mult;
+          // 弾・魔法は撃つたびに硬直（recoveryMult で調整）
+          const rm = this.weapon.recoveryMult != null ? this.weapon.recoveryMult : 1;
+          // recoveryMs で硬直の長さを直接指定、recoveryOnHit: true なら当たっても硬直する（ドラゴンのブレスなど）
+          const baseRec = this.weapon.recoveryMs != null ? this.weapon.recoveryMs : (CFG.whiffRecoveryMs || 0) * rm;
+          const recover = (hit && !this.weapon.recoveryOnHit) ? 0 : baseRec / mult;
           this.recoverLeft = this.recoverTotal = recover;
-          this.cooldownUntil = now + recover + CFG.attackCooldown / this.attackMult;
+          const cm = this.weapon.cooldownMult != null ? this.weapon.cooldownMult : 1;
+          this.cooldownUntil = now + recover + CFG.attackCooldown * cm / this.attackMult;
           // KO で勝利ポーズに入っていたら上書きしない
           if (this.state === 'attack') this.setState('idle');
         }
@@ -294,6 +393,7 @@
 
       // 空振り硬直中：その場で止まる
       if (this.recoverLeft > 0) {
+        this.vx = this.vy = 0;
         this.recoverLeft -= dt;
         if (this.recoverLeft < 0) this.recoverLeft = 0;
         this.setState('idle');
@@ -305,15 +405,35 @@
       if (wantAttack && now >= this.cooldownUntil) {
         this.faceOpponent(opp);
         this.attackSerial++;
+        this.vx = this.vy = 0;
         this.setState('attack');
+        if ((this.weapon.kind || 'melee') === 'area') game.placeArea(this, opp); // 魔法：予備動作の間、魔法陣で発動位置を予告
         return;
       }
+      // 移動：入力の方向へ加速、離すと減速（移動の型の accel / brake）。逆方向への切り返しは減速してから加速
       const speedScale = this.isPlayer ? 1 : (CFG.ai.speedScale == null ? 1 : CFG.ai.speedScale);
-      const sx = CFG.moveSpeedX * this.moveMult * speedScale;
-      const sy = CFG.moveSpeedY * this.moveMult * speedScale;
-      if (move.x || move.y) {
-        this.x = clamp(this.x + move.x * sx * dt / 1000, CFG.field.left, CFG.field.right);
-        this.y = clamp(this.y + move.y * sy * dt / 1000, CFG.field.top, CFG.field.bottom);
+      const mv = this.mv, k = this.moveMult * speedScale;
+      const sec = dt / 1000;
+      const axis = (v, input, max) => {
+        const target = input * max;
+        const acc = (mv.accel || 99999) * this.moveMult, brk = (mv.brake || 99999) * this.moveMult;
+        let rate;
+        if (!input) rate = brk;
+        else if (v * target < 0) rate = brk + acc;       // 切り返し：止まる力 + 進む力
+        else if (Math.abs(target) < Math.abs(v)) rate = brk; // 最高速より速い（斜め入力など）
+        else rate = acc;
+        const d = target - v, step = rate * sec;
+        return Math.abs(d) <= step ? target : v + Math.sign(d) * step;
+      };
+      this.vx = axis(this.vx, move.x || 0, (mv.maxSpeedX || CFG.moveSpeedX) * k);
+      this.vy = axis(this.vy, move.y || 0, (mv.maxSpeedY || CFG.moveSpeedY) * k);
+      const f = CFG.field;
+      const nx = this.x + this.vx * sec, ny = this.y + this.vy * sec;
+      this.x = clamp(nx, f.left, f.right);
+      this.y = clamp(ny, f.top, f.bottom);
+      if (this.x !== nx) this.vx = 0;   // 壁で止まる
+      if (this.y !== ny) this.vy = 0;
+      if (move.x || move.y || Math.abs(this.vx) > 25 || Math.abs(this.vy) > 25) {
         if (!CFG.autoFaceOpponent && move.x) this.facing = move.x > 0 ? 1 : -1;
         this.setState('move');
       } else {
@@ -345,6 +465,7 @@
         t: 0, dur: Math.max(1, CFG.dodgeMs || 200)
       };
       this.dodgeCooldownUntil = now + (CFG.dodgeCooldownMs || 400);
+      this.vx = this.vy = 0;
       this.dodgeTrail = [];
       this.setState('move');
       return true;
@@ -373,12 +494,15 @@
       }
     }
 
-    takeHit(attacker, now) {
+    // src：近接なら攻撃したキャラ。弾・魔法なら { x, dir }（押し出す向き）
+    takeHit(attacker, now, src) {
       this.life = Math.max(0, this.life - 1);
       this.recoverLeft = 0;
       this.dodge = null;
       this.dodgeTrail = [];
-      this.applyKnockback(attacker);
+      this.vx = this.vy = 0;
+      if (src) this.applyKnockbackDir(src.dir);
+      else this.applyKnockback(attacker);
       if (this.life <= 0) {
         this.setState('down');
       } else {
@@ -391,7 +515,7 @@
     // 壁で押し出しきれない分は、攻撃した側を押し戻す
     applyKnockback(attacker) {
       const dir = attacker.facing;
-      const a = attacker.def.attackBox;
+      const a = attacker.attackBox;
       const half = this.bodyRect().w / 2;
       // 押し出したい位置：相手の判定の先端 + 自分の体の半分 + 余白
       const targetX = attacker.x + dir * (a.near + a.reach + half + (CFG.knockbackReachMargin || 0));
@@ -402,6 +526,22 @@
       const short = push - own;
       const ratio = CFG.wallPushbackRatio == null ? 1 : CFG.wallPushbackRatio;
       if (short > 0.5 && ratio > 0) attacker.knock = -dir * short * ratio;
+    }
+
+    // 弾・魔法のノックバック：決まった距離だけ押し出す（攻撃した側は押し戻さない）。距離は移動の型で変えない
+    applyKnockbackDir(dir) {
+      dir = dir >= 0 ? 1 : -1;
+      const push = CFG.knockback;
+      const room = Math.max(0, dir > 0 ? CFG.field.right - this.x : this.x - CFG.field.left);
+      this.knock = dir * Math.min(push, room);
+    }
+
+    // 飛行：速度に合わせた傾き（度、右向き基準のローカル。前へ進むと前傾、下がると後傾）
+    velLean() {
+      const deg = this.mv.velLeanDeg || 0;
+      if (!deg || this.state === 'attack' || this.state === 'hurt' || this.state === 'down' || this.state === 'downLoop') return 0;
+      const max = (this.mv.maxSpeedX || CFG.moveSpeedX) * this.moveMult;
+      return deg * clamp(this.vx * this.facing / Math.max(1, max), -1, 1);
     }
 
     draw(c, now, debug, asGhost) {
@@ -452,6 +592,8 @@
         // APNG モード：モーションごとの APNG をそのまま再生
         drawShadow(c, w, this, this.state, progress);
         if (this.isFlipped()) c.scale(-1, 1);
+        const vl = this.velLean();
+        if (vl) c.rotate(vl * Math.PI / 180);
         if (windupHold > 0 && CFG.windupExtraLeanDeg) c.rotate(-CFG.windupExtraLeanDeg * windupHold * Math.PI / 180);
         c.drawImage(entry.frameAt(this.stateTime, dur, !!sc.loop), -w / 2, -h, w, h);
       } else {
@@ -467,7 +609,12 @@
           stateTime: this.stateTime,
           hitAt: this.hitAtProgress(),
           windupHold: windupHold,
-          windupExtraLeanDeg: CFG.windupExtraLeanDeg || 0
+          windupExtraLeanDeg: CFG.windupExtraLeanDeg || 0,
+          weaponMotion: this.weapon.motion || 'swing',
+          thrustPx: this.weapon.thrustPx || 0,
+          velLeanDeg: this.velLean(),
+          motion: motionOverrideOf(this.charId),
+          slashColor: this.colors.slash
         });
       }
       c.restore();
@@ -475,7 +622,7 @@
       // 予備動作の開始フラッシュ（既存スプライトのまわりを短く光らせる）
       if (!asGhost && this.inStartup() && this.stateTime < (CFG.windupFlashMs || 0)) {
         const a = 1 - this.stateTime / CFG.windupFlashMs;
-        const col = this.charId === 'angel' ? '255,230,150' : '255,80,70';
+        const col = this.colors.flash;
         c.save();
         c.globalCompositeOperation = 'lighter';
         const g = c.createRadialGradient(this.x, this.y - h * 0.55, 8, this.x, this.y - h * 0.55, h * 0.7);
@@ -491,7 +638,7 @@
         c.save();
         c.globalCompositeOperation = 'lighter';
         const g = c.createRadialGradient(this.x, this.y - h / 2, 10, this.x, this.y - h / 2, h * 0.6);
-        const col = this.charId === 'angel' ? '255,230,120' : '170,60,255';
+        const col = this.colors.aura;
         g.addColorStop(0, 'rgba(' + col + ',0.0)');
         g.addColorStop(0.7, 'rgba(' + col + ',' + (0.12 + 0.06 * Math.sin(now * 0.01)) + ')');
         g.addColorStop(1, 'rgba(' + col + ',0)');
@@ -518,10 +665,10 @@
       c.strokeStyle = 'rgba(80,200,255,0.8)';
       c.beginPath();
       c.moveTo(this.x - 30, this.y); c.lineTo(this.x + 30, this.y);
-      c.moveTo(this.x, this.y - CFG.depthTolerance); c.lineTo(this.x, this.y + CFG.depthTolerance);
+      c.moveTo(this.x, this.y - this.depthTol); c.lineTo(this.x, this.y + this.depthTol);
       c.stroke();
       // 攻撃判定
-      if (this.state === 'attack') {
+      if (this.state === 'attack' && this.isMelee) {
         const ar = this.attackRect();
         c.strokeStyle = 'rgba(255,80,80,0.6)';
         c.setLineDash([6, 4]);
@@ -569,23 +716,34 @@
 
     // 自分の攻撃が当たる最大の横距離（中心同士）
     myReach() {
-      const a = this.me.def.attackBox;
+      const a = this.me.attackBox;
       return a.near + a.reach + this.opp.bodyRect().w / 2;
     }
 
     // プレイヤーの攻撃が自分に届く最大の横距離（中心同士）
+    // 相手が弾・魔法のキャラなら近接の射程は無いので、間合いを取らずに詰める（0 を返す）
     oppReach() {
-      const a = this.opp.def.attackBox;
+      if (!this.opp.isMelee) return 0;
+      const a = this.opp.attackBox;
       return a.near + a.reach + this.me.bodyRect().w / 2;
     }
 
-    depthAligned(k) { return Math.abs(this.opp.y - this.me.y) <= CFG.depthTolerance * (k || 0.75); }
+    // 奥行きが揃っているか（自分の武器の許容値で判断。槍は狭いのでしっかり揃える）
+    depthAligned(k) { return Math.abs(this.opp.y - this.me.y) <= this.me.depthTol * (k || 0.75); }
+    // 相手の攻撃が当たる奥行きか（相手の武器の許容値）
+    oppDepthAligned(k) { return Math.abs(this.opp.y - this.me.y) <= this.opp.depthTol * (k || 1); }
+
+    // 慣性込みで、今から入力を離したら止まる位置までの距離（飛行は滑るので早めにブレーキ）
+    stopOffset() {
+      const me = this.me, b = Math.max(1, (me.mv.brake || 99999) * me.moveMult);
+      return { x: me.vx * Math.abs(me.vx) / (2 * b), y: me.vy * Math.abs(me.vy) / (2 * b) };
+    }
 
     inRange() {
       const me = this.me, opp = this.opp;
       if (!this.depthAligned(0.75)) return false;
       const facing = opp.x >= me.x ? 1 : -1;
-      const a = me.def.attackBox;
+      const a = me.attackBox;
       const x = facing === 1 ? me.x + a.near : me.x - a.near - a.reach;
       // 少し内側で判断（ギリギリだと外れやすいので）
       const r = { x: x + (facing === 1 ? 0 : a.reach * 0.15), y: me.y - a.top, w: a.reach * 0.85, h: a.top - a.bottom };
@@ -628,18 +786,22 @@
 
     stepToward(targetGap, dirX, dy, xScale) {
       // プレイヤーが攻撃を振っている間は、射程の中へは入らない
-      if (this.opp.inStartup()) targetGap = Math.max(targetGap, this.oppReach() + (CFG.ai.spacingMargin || 0));
-      const ex = this.gapX() - targetGap; // 正 = 遠い
+      if (this.opp.inStartup() && this.opp.isMelee) targetGap = Math.max(targetGap, this.oppReach() + (CFG.ai.spacingMargin || 0));
+      // 慣性：止まるまでに進む分を見込んで判断する（行き過ぎ防止）
+      const so = this.stopOffset();
+      const ex = Math.abs(this.opp.x - (this.me.x + so.x)) - targetGap; // 正 = 遠い
       let mx = Math.abs(ex) > 6 ? (ex > 0 ? dirX : -dirX) : 0;
       if (mx === -dirX && this.cornered()) mx = 0;
-      const my = Math.abs(dy) > 6 ? Math.sign(dy) : 0;
+      const dy2 = dy - so.y;
+      const my = Math.abs(dy2) > 6 ? Math.sign(dy2) : 0;
       const len = Math.hypot(mx, my) || 1;
       return { x: mx / len * (xScale || 1), y: my / len };
     }
 
     // 戻り値: { move, attack }
-    update(now) {
+    update(now, game) {
       const A = CFG.ai, me = this.me, opp = this.opp;
+      this.game = game || this.game;
       if (now < this.startAt || !me.canAct()) return { move: { x: 0, y: 0 }, attack: false };
       const dirX = opp.x >= me.x ? 1 : -1;
       const dy = opp.y - me.y;
@@ -661,10 +823,14 @@
         if (now >= this.modeUntil) this.mode = 'space';
         else {
           if (!this.evadeDepth && this.cornered()) { this.evadeDepth = true; this.dodgeDir = this.roomyDepthDir(); }
-          this.move = this.evadeDepth ? { x: -dirX * 0.3, y: this.dodgeDir } : { x: -dirX, y: 0 };
+          if (this.evadeVec) this.move = this.evadeVec;
+          else this.move = this.evadeDepth ? { x: -dirX * 0.3, y: this.dodgeDir } : { x: -dirX, y: 0 };
           return { move: this.move, attack: false };
         }
       }
+
+      // ---- 弾・魔法のキャラ：距離を取って撃つ ----
+      if (!me.isMelee) return this.updateRanged(now, dirX, dy);
 
       // ---- 隙を突く（毎フレーム監視、反応の遅れはごく短い） ----
       if (this.oppVulnerable(now)) {
@@ -709,8 +875,44 @@
     }
 
     decideEvade(now, dirX) {
-      const A = CFG.ai, opp = this.opp;
-      const danger = this.gapX() < this.oppReach() + 10 && this.depthAligned(1.2);
+      const A = CFG.ai, opp = this.opp, me = this.me;
+      this.evadeVec = null;
+      const kind = opp.weapon.kind || 'melee';
+      if (kind === 'projectile') {
+        // 弾：同じ奥行きで正面にいるなら、奥行き方向へずれる
+        const facingMe = (me.x - opp.x) * opp.facing > 0;
+        if (!facingMe || Math.abs(opp.y - me.y) > opp.depthTol + 14) return;
+        if (Math.random() >= A.backstepChance + A.dodgeChance) return;
+        const P = opp.weapon.projectile || {};
+        const travel = Math.max(0, this.gapX() - 40) / Math.max(1, P.speed || 700) * 1000;
+        this.mode = 'evade';
+        this.evadeDepth = true;
+        this.dodgeDir = this.roomyDepthDir();
+        this.modeUntil = now + Math.max(200, opp.hitTime() - opp.stateTime + travel + 120);
+        this.attackAt = 0;
+        return;
+      }
+      if (kind === 'area') {
+        // 魔法：予告の魔法陣の中にいるなら、中心から離れる方向へ出る
+        const g = this.game;
+        const a = g && g.areas.find((x) => x.owner === opp && !x.fireAt);
+        if (!a) return;
+        const nx = (me.x - a.x) / (a.rx * 1.25), ny = (me.y - a.y) / (a.ry * 1.25);
+        if (nx * nx + ny * ny > 1) return;
+        if (Math.random() >= A.backstepChance + A.dodgeChance + 0.15) return;
+        let vx = me.x - a.x, vy = (me.y - a.y) * (a.rx / a.ry);
+        if (Math.abs(vx) < 4 && Math.abs(vy) < 4) vx = -dirX;
+        // 壁際なら奥行き方向を優先
+        const f = CFG.field;
+        if ((vx < 0 && me.x - f.left < 60) || (vx > 0 && f.right - me.x < 60)) { vx = 0; vy = vy || this.roomyDepthDir(); }
+        const l = Math.hypot(vx, vy) || 1;
+        this.evadeVec = { x: vx / l, y: vy / l };
+        this.mode = 'evade';
+        this.modeUntil = now + Math.max(200, opp.hitTime() - opp.stateTime + (a.expandMs || 160) + 60);
+        this.attackAt = 0;
+        return;
+      }
+      const danger = this.gapX() < this.oppReach() + 10 && this.oppDepthAligned(1.2);
       if (!danger || this.mode === 'punish') return;
       const r = Math.random();
       if (r < A.backstepChance) {
@@ -724,6 +926,64 @@
       this.modeUntil = now + Math.max(200, opp.hitTime() - opp.stateTime + 80);
       this.dodgeDir = this.roomyDepthDir();
       this.attackAt = 0;
+    }
+
+    // 弾・魔法のキャラの動き：相手の近接の射程の外（好みの距離）を保ち、撃てるときに撃つ
+    updateRanged(now, dirX, dy) {
+      const A = CFG.ai, me = this.me, opp = this.opp;
+      const kind = me.weapon.kind;
+      const P = me.weapon.projectile || {}, AR = me.weapon.area || {};
+      const front = kind === 'area' && AR.anchor === 'front';
+      const frontReach = (AR.offsetX != null ? AR.offsetX : (AR.radiusX || 85)) + (AR.radiusX || 85) * 0.7;
+      const maxR = kind === 'projectile' ? (P.range || 700) * 0.85 : front ? frontReach : (AR.range || 480) + 20;
+      const pref = front ? (AR.offsetX != null ? AR.offsetX : (AR.radiusX || 85))
+        : Math.min(maxR - 40, Math.max(this.oppReach() + 90, kind === 'projectile' ? 330 : 300));
+      const gap = this.gapX();
+      let attack = false;
+
+      // 予約した攻撃
+      if (this.attackAt && now >= this.attackAt) {
+        this.attackAt = 0;
+        if (now >= me.cooldownUntil && this.canFire(maxR) && this.safeToAttack()) attack = true;
+      }
+      if (attack) return { move: { x: 0, y: 0 }, attack: true };
+
+      if (now >= this.nextThink) {
+        this.nextThink = now + A.thinkInterval * rand(0.7, 1.3);
+        const jitter = rand(0, A.decisionJitterMs || 0);
+        if (this.mode !== 'space' && now >= this.modeUntil) this.mode = 'space';
+        // 壁際で近寄られたら奥行きへ回り込む
+        if (this.mode === 'space' && this.cornered() && gap < pref * 0.6) {
+          this.mode = 'sidestep';
+          this.modeUntil = now + A.sidestepMs;
+          this.dodgeDir = this.roomyDepthDir();
+        }
+        // 撃つ（隙があればすぐ、なければ確率で）
+        const chance = this.oppVulnerable(now) ? 0.9 : A.attackChance;
+        if (!this.attackAt && now >= me.cooldownUntil && this.canFire(maxR) && Math.random() < chance) {
+          this.attackAt = now + A.reactionDelay * rand(0.5, 1.2) + jitter;
+        }
+        if (this.mode === 'sidestep') {
+          this.move = { x: dirX * 0.5, y: this.dodgeDir };
+        } else {
+          // 投擲は奥行きを揃える。魔法は揃えなくてよい（少しずらして相手の近接を避ける）
+          let ty = dy;
+          if (kind === 'area' && !front) ty = Math.abs(dy) < 50 ? 0 : dy * 0.5;
+          this.move = this.stepToward(pref, dirX, ty);
+          // 近すぎるときは（壁際でなければ）下がる優先
+          if (gap < pref * 0.7 && !this.cornered()) this.move = { x: -dirX, y: this.move.y * 0.5 };
+        }
+      }
+      return { move: this.move, attack: false };
+    }
+    canFire(maxR) {
+      const me = this.me, opp = this.opp;
+      if (opp.state === 'down' || opp.state === 'downLoop') return false;
+      if (this.gapX() > maxR) return false;
+      if (me.weapon.kind === 'projectile') return Math.abs(opp.y - me.y) <= me.depthTol * 0.6;
+      const AR = me.weapon.area || {};
+      if (AR.anchor === 'front') return Math.abs(opp.y - me.y) <= (AR.radiusY || 38) * 0.7 && (opp.x - me.x) * (opp.x >= me.x ? 1 : -1) >= 0;
+      return true;
     }
 
     think(now) {
@@ -747,8 +1007,8 @@
         this.attackAt = now + A.reactionDelay * rand(0.6, 1.4) + jitter;
       }
 
-      // ---- 踏み込み（受け身になりすぎないように） ----
-      if (this.mode === 'space' && Math.random() < A.engageChance) {
+      // ---- 踏み込み（受け身になりすぎないように）。相手が弾・魔法なら距離を取られると不利なので常に詰める ----
+      if (this.mode === 'space' && (!opp.isMelee || Math.random() < A.engageChance)) {
         this.mode = 'engage';
         this.modeUntil = now + A.engageMs;
       }
@@ -757,7 +1017,18 @@
           if (!this.attackAt && now >= me.cooldownUntil) this.attackAt = now + A.reactionDelay * rand(0.3, 0.8) + jitter;
           this.move = { x: 0, y: Math.abs(dy) > 6 ? Math.sign(dy) * 0.6 : 0 };
         } else {
-          this.move = this.stepToward(this.myReach() * 0.6, dirX, dy);
+          // 相手が投擲なら、遠いうちは奥行きを少しずらして弾の線を外しながら近づき、近くで揃える
+          let ty = dy;
+          if (opp.weapon.kind === 'projectile' && this.gapX() > this.myReach() * 1.4) {
+            if (!this.zigDir) this.zigDir = this.roomyDepthDir();
+            const off = opp.depthTol + 24;
+            const want = opp.y - this.zigDir * off;
+            if (want < CFG.field.top + 10 || want > CFG.field.bottom - 10) this.zigDir = -this.zigDir;
+            ty = (opp.y - this.zigDir * off) - me.y;
+          } else {
+            this.zigDir = 0;
+          }
+          this.move = this.stepToward(this.myReach() * 0.6, dirX, ty);
         }
         return;
       }
@@ -784,7 +1055,7 @@
     phase: 'title',      // title / intro / fight / ko / result
     time: 0,
     lastTs: 0,
-    playerChar: 'angel',
+    playerChar: CHAR_IDS[0] || 'angel',
     player: null,
     enemy: null,
     ai: null,
@@ -797,6 +1068,9 @@
     debug: !!CFG.debugHitboxes,
     lastResult: null,
     effects: [],
+    projectiles: [],     // 投擲の弾
+    areas: [],           // 魔法の範囲（予告の魔法陣 → 発動）
+    opponentChar: 'random', // 相手のキャラ（'random' = ランダム。スマブラ式）
 
     get fighting() { return this.phase === 'fight'; },
 
@@ -806,11 +1080,47 @@
       requestAnimationFrame(this.loop.bind(this));
     },
 
+    // キャラ選択ボタンを assets/config.js の characters から作る（あなた／あいて の2列。どちらにもランダムあり）
+    buildSelect() {
+      const self = this;
+      const W_ = CFG.weaponTypes || {}, M_ = CFG.moveTypes || {};
+      const esc = (t) => String(t == null ? '' : t).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+      document.querySelectorAll('.char-select[data-side]').forEach((box) => {
+        const side = box.dataset.side;
+        box.innerHTML = '';
+        const add = (id, html, cls) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'char-btn ' + cls;
+          b.dataset.char = id;
+          b.dataset.side = side;
+          b.innerHTML = html;
+          b.addEventListener('click', () => (side === 'player' ? self.selectChar(id) : self.selectOpponent(id)));
+          box.appendChild(b);
+        };
+        CHAR_IDS.forEach((id) => {
+          const d = ASSETS.characters[id];
+          const wl = (d.weapon && d.weapon.label) || (W_[d.weaponType] || W_.sword || {}).label || '';
+          const ml = (d.move && d.move.label) || (M_[d.moveType] || M_.fly || {}).label || '';
+          add(id,
+            '<span class="char-portrait"><span class="char-icon"></span></span>' +
+            '<span class="char-name">' + esc(d.name || id) + '</span>' +
+            '<span class="char-type">' + esc(wl) + (wl && ml ? ' × ' : '') + esc(ml) + '</span>' +
+            (d.selectNote ? '<span class="char-note">' + d.selectNote + '</span>' : ''),
+            themeOf(id));
+        });
+        add('random',
+          '<span class="char-portrait"><span class="char-icon"><span class="random-mark">?</span></span></span>' +
+          '<span class="char-name">ランダム</span><span class="char-type">おまかせ</span>', 'random');
+        box.classList.toggle('compact', CHAR_IDS.length + 1 > 3);
+      });
+      this.selectChar(this.playerChar);
+      this.selectOpponent(this.opponentChar);
+    },
+
     bindUi() {
       const self = this;
-      document.querySelectorAll('.char-btn').forEach((btn) => {
-        btn.addEventListener('click', () => self.selectChar(btn.dataset.char));
-      });
+      this.buildSelect();
       document.getElementById('start-btn').addEventListener('click', () => self.startMatch());
       document.getElementById('retry-btn').addEventListener('click', () => self.startMatch());
       document.getElementById('title-btn').addEventListener('click', () => self.toTitle());
@@ -826,8 +1136,13 @@
       window.Input.onKey((k) => {
         if (k === 'h') { self.debug = !self.debug; return; }
         if (self.phase === 'title') {
-          if (k === 'a' || k === 'd' || k === 'arrowleft' || k === 'arrowright') {
-            self.selectChar(self.playerChar === 'angel' ? 'lucifer' : 'angel');
+          // A / D：自分のキャラ、← / →：相手のキャラ（ランダム含めて順に切り替え）
+          const list = CHAR_IDS.concat(['random']);
+          const cycle = (cur, d) => list[(list.indexOf(cur) + d + list.length) % list.length];
+          if (k === 'a' || k === 'd') {
+            self.selectChar(cycle(self.playerChar, k === 'd' ? 1 : -1));
+          } else if (k === 'arrowleft' || k === 'arrowright') {
+            self.selectOpponent(cycle(self.opponentChar, k === 'arrowright' ? 1 : -1));
           } else if (k === 'enter') {
             self.startMatch();
           }
@@ -839,9 +1154,31 @@
     },
 
     selectChar(id) {
-      if (CHAR_IDS.indexOf(id) < 0) return;
+      if (id !== 'random' && CHAR_IDS.indexOf(id) < 0) return;
       this.playerChar = id;
-      document.querySelectorAll('.char-btn').forEach((b) => b.classList.toggle('selected', b.dataset.char === id));
+      this.markSelected('player', id);
+    },
+    markSelected(side, id) {
+      document.querySelectorAll('.char-btn[data-side="' + side + '"]').forEach((b) => {
+        const on = b.dataset.char === id;
+        b.classList.toggle('selected', on);
+        // 枠の中でスクロールしているときは、選んだボタンが見えるようにする（画面全体は動かさない）
+        if (on && b.parentElement && b.parentElement.scrollHeight > b.parentElement.clientHeight) {
+          const box = b.parentElement;
+          if (b.offsetTop < box.scrollTop) box.scrollTop = b.offsetTop - 6;
+          else if (b.offsetTop + b.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = b.offsetTop + b.offsetHeight - box.clientHeight + 6;
+        }
+      });
+    },
+    selectOpponent(id) {
+      if (id !== 'random' && CHAR_IDS.indexOf(id) < 0) return;
+      this.opponentChar = id;
+      this.markSelected('opponent', id);
+    },
+    // ランダムは試合のたびに選び直す（同キャラ対戦もあり）
+    pickChar(sel) {
+      if (sel !== 'random' && CHAR_IDS.indexOf(sel) >= 0) return sel;
+      return CHAR_IDS[Math.floor(Math.random() * CHAR_IDS.length)];
     },
 
     showScreen(id) {
@@ -855,8 +1192,9 @@
     },
 
     startMatch() {
-      const enemyChar = this.playerChar === 'angel' ? 'lucifer' : 'angel';
-      this.player = new Fighter(this.playerChar, true);
+      const playerChar = this.pickChar(this.playerChar);
+      const enemyChar = this.pickChar(this.opponentChar);
+      this.player = new Fighter(playerChar, true);
       this.enemy = new Fighter(enemyChar, false);
       this.ai = new AI(this.enemy, this.player);
       this.wins = { player: 0, enemy: 0 };
@@ -875,6 +1213,8 @@
       this.enemy.reset(710, 420);
       this.ai.reset(this.time);
       this.effects = [];
+      this.projectiles = [];
+      this.areas = [];
       window.Input.clear();
       this.phase = 'intro';
       this.phaseStart = this.time;
@@ -889,7 +1229,7 @@
     resolveAttack(attacker, defender) {
       const ar = attacker.attackRect();
       const br = defender.bodyRect();
-      const depthOk = Math.abs(attacker.y - defender.y) <= CFG.depthTolerance;
+      const depthOk = Math.abs(attacker.y - defender.y) <= attacker.depthTol;
       const hit = this.phase === 'fight' && depthOk && rectsOverlap(ar, br) &&
         this.time >= defender.invulnUntil && defender.state !== 'down' && defender.state !== 'downLoop';
       attacker.lastAttackRect = ar;
@@ -897,10 +1237,110 @@
       attacker.attackFlashUntil = this.time + CFG.hitboxFlashMs;
       if (hit) {
         defender.takeHit(attacker, this.time);
-        this.effects.push({ x: (Math.max(ar.x, br.x) + Math.min(ar.x + ar.w, br.x + br.w)) / 2, y: defender.y - defender.def.height * 0.55, t: this.time, color: attacker.charId === 'angel' ? '255,240,150' : '200,80,255' });
+        this.effects.push({ x: (Math.max(ar.x, br.x) + Math.min(ar.x + ar.w, br.x + br.w)) / 2, y: defender.y - defender.def.height * 0.55, t: this.time, color: attacker.colors.hit });
         if (defender.life <= 0) this.onKO(attacker === this.player ? 'player' : 'enemy', 'KO!');
       }
       return hit;
+    },
+
+    canBeHit(defender) {
+      return this.phase === 'fight' && this.time >= defender.invulnUntil && defender.state !== 'down' && defender.state !== 'downLoop';
+    },
+    opponentOf(f) { return f === this.player ? this.enemy : this.player; },
+
+    // ---- 投擲：弾 ----
+    spawnProjectile(owner) {
+      const P = owner.weapon.projectile || {};
+      const dir = owner.facing;
+      const x = owner.x + dir * (P.spawnX != null ? P.spawnX : 40);
+      this.projectiles.push({
+        owner: owner, x: x, y: owner.y, startX: x, dir: dir,
+        speed: P.speed || 700, radius: P.radius != null ? P.radius : 10, range: P.range || 700,
+        height: P.height != null ? P.height : 95, size: P.size || 12,
+        depthTol: owner.depthTol, color: owner.colors.slash, sprite: P.sprite || null, t0: this.time, dead: false
+      });
+    },
+    updateProjectiles(dt) {
+      const f = CFG.field;
+      this.projectiles.forEach((p) => {
+        if (p.dead) return;
+        const prevX = p.x;
+        p.x += p.dir * p.speed * dt / 1000;
+        const def = this.opponentOf(p.owner);
+        if (def && this.canBeHit(def) && Math.abs(def.y - p.y) <= p.depthTol) {
+          const br = def.bodyRect();
+          // このフレームで弾が通った範囲（すり抜け防止）と体の重なり
+          const x0 = Math.min(prevX, p.x) - p.radius, x1 = Math.max(prevX, p.x) + p.radius;
+          if (x1 > br.x && x0 < br.x + br.w) {
+            p.dead = true;
+            this.applyRangedHit(p.owner, def, p.x, p.dir);
+            return;
+          }
+        }
+        if (Math.abs(p.x - p.startX) > p.range || p.x < f.left - 80 || p.x > f.right + 80) p.dead = true;
+      });
+      this.projectiles = this.projectiles.filter((p) => !p.dead);
+    },
+
+    // ---- 魔法：範囲 ----
+    // 攻撃開始時：相手の足元（届かなければ range の距離）に魔法陣を置く。発動までは予告だけで当たらない
+    placeArea(owner, opp) {
+      const A = owner.weapon.area || {};
+      const f = CFG.field;
+      const range = A.range || 480;
+      const lead = (A.lead || 0) * owner.hitTime() / 1000;
+      let tx = opp.x + (opp.vx || 0) * lead, ty = opp.y + (opp.vy || 0) * lead;
+      if (A.anchor === 'front') {
+        // 自分の正面の決まった位置に出す（ブレスなど）。offsetX = キャラ中心から範囲の中心までの距離
+        tx = owner.x + owner.facing * (A.offsetX != null ? A.offsetX : (A.radiusX || 85));
+        ty = owner.y;
+      } else {
+        const dx = tx - owner.x, dy = ty - owner.y, d = Math.hypot(dx, dy);
+        if (d > range) { tx = owner.x + dx / d * range; ty = owner.y + dy / d * range; }
+      }
+      this.areas = this.areas.filter((a) => a.owner !== owner);
+      this.areas.push({
+        owner: owner, serial: owner.attackSerial, x: clamp(tx, f.left, f.right), y: clamp(ty, f.top, f.bottom),
+        rx: A.radiusX || 85, ry: A.radiusY || 38, expandMs: A.expandMs || 160, lingerMs: A.lingerMs || 220,
+        color: owner.colors.slash, sprite: A.sprite || null, t0: this.time, fireAt: 0, hitDone: false, dead: false
+      });
+    },
+    // 判定のタイミング：魔法陣が広がり始める
+    triggerArea(owner) {
+      const a = this.areas.find((x) => x.owner === owner && x.serial === owner.attackSerial && !x.fireAt);
+      if (a) a.fireAt = this.time;
+    },
+    areaRadiusK(a) {
+      if (!a.fireAt) return 0;
+      return clamp((this.time - a.fireAt) / Math.max(1, a.expandMs), 0, 1);
+    },
+    updateAreas() {
+      this.areas.forEach((a) => {
+        if (!a.fireAt) {
+          // 予備動作中に詠唱がつぶされたら（被ダメ・KO）魔法陣は消える
+          if (a.owner.state !== 'attack' || a.owner.attackSerial !== a.serial) a.dead = true;
+          return;
+        }
+        const t = this.time - a.fireAt;
+        if (t > a.expandMs + a.lingerMs) { a.dead = true; return; }
+        if (a.hitDone) return;
+        const k = this.areaRadiusK(a);
+        const def = this.opponentOf(a.owner);
+        if (!def || !this.canBeHit(def) || k <= 0) return;
+        const nx = (def.x - a.x) / (a.rx * k), ny = (def.y - a.y) / (a.ry * k);
+        if (nx * nx + ny * ny <= 1) {
+          a.hitDone = true;
+          const dir = def.x !== a.x ? Math.sign(def.x - a.x) : a.owner.facing;
+          this.applyRangedHit(a.owner, def, def.x, dir);
+        }
+      });
+      this.areas = this.areas.filter((a) => !a.dead);
+    },
+    applyRangedHit(attacker, defender, hx, dir) {
+      defender.takeHit(attacker, this.time, { dir: dir });
+      attacker.lastAttackHit = true;
+      this.effects.push({ x: hx, y: defender.y - defender.def.height * 0.55, t: this.time, color: attacker.colors.hit });
+      if (defender.life <= 0) this.onKO(attacker === this.player ? 'player' : 'enemy', 'KO!');
     },
 
     onKO(winner, text) {
@@ -938,7 +1378,7 @@
       el.className = 'result-text' + (r === 'lose' ? ' lose' : '');
       // 結果パネルの色：勝った側の陣営（引き分けはプレイヤー側）
       const tintChar = r === 'lose' ? this.enemy.charId : this.player.charId;
-      document.getElementById('result-screen').dataset.char = tintChar;
+      document.getElementById('result-screen').dataset.char = themeOf(tintChar);
       this.lastResult = r;
       const pName = ASSETS.characters[this.player.charId].name;
       const eName = ASSETS.characters[this.enemy.charId].name;
@@ -978,7 +1418,7 @@
         pAtk = window.Input.consumeAttack();
         const pDodge = window.Input.consumeDodge();
         if (pDodge) this.player.tryDodge(pDodge, now);
-        const d = this.ai.update(now);
+        const d = this.ai.update(now, this);
         eMove = d.move; eAtk = d.attack;
         if (CFG.roundTimeLimit > 0) {
           this.roundTimeLeft -= dt / 1000;
@@ -1002,6 +1442,8 @@
         this.player.update(dt, now, pMove, pAtk, this.enemy, this);
       }
 
+      this.updateProjectiles(dt);
+      this.updateAreas();
       this.separate();
 
       if (this.phase === 'ko' && now - this.phaseStart >= CFG.koPauseMs) this.afterRound();
@@ -1012,7 +1454,7 @@
     separate() {
       const a = this.player, b = this.enemy;
       if (a.state === 'down' || b.state === 'down' || a.state === 'downLoop' || b.state === 'downLoop') return;
-      if (Math.abs(a.y - b.y) > CFG.depthTolerance) return;
+      if (Math.abs(a.y - b.y) > CFG.depthTolerance) return; // 体の重なりは武器と関係なく共通の値
       const minGap = (a.bodyRect().w + b.bodyRect().w) / 2 * CFG.separation;
       const dx = b.x - a.x;
       if (Math.abs(dx) >= minGap) return;
@@ -1030,16 +1472,26 @@
 
       if (!this.player) {
         // タイトル背景：キャラを飾りで表示
+        // 選んでいるキャラ（ランダムは最初の2キャラ）を左右に飾る
+        const lc = this.playerChar !== 'random' ? this.playerChar : CHAR_IDS[0];
+        const rc = this.opponentChar !== 'random' ? this.opponentChar : (CHAR_IDS[1] || CHAR_IDS[0]);
         c.save();
-        c.translate(250, 470); drawTitleChar(c, 'angel', now); c.restore();
+        c.translate(250, 470); drawTitleChar(c, lc, now); c.restore();
         c.save();
-        c.translate(710, 470); c.scale(-1, 1); drawTitleChar(c, 'lucifer', now + 500); c.restore();
+        c.translate(710, 470); c.scale(-1, 1); drawTitleChar(c, rc, now + 500); c.restore();
         return;
       }
 
-      // 奥行き順（Y が小さい＝奥から）に描画
-      const list = [this.player, this.enemy].sort((a, b) => a.y - b.y);
-      list.forEach((f) => f.draw(c, now, this.debug));
+      // 魔法陣（床に描く。キャラより先）
+      this.areas.forEach((a) => drawAreaFloor(c, a, this, now));
+      // 奥行き順（Y が小さい＝奥から）に描画。弾も同じ順番に混ぜる
+      const list = [this.player, this.enemy].concat(this.projectiles).sort((a, b) => a.y - b.y);
+      list.forEach((f) => {
+        if (f instanceof Fighter) f.draw(c, now, this.debug);
+        else drawProjectile(c, f, now, this.debug);
+      });
+      // 魔法の発動（光の柱。キャラの上に重ねる）
+      this.areas.forEach((a) => drawAreaBurst(c, a, this, now));
 
       // ヒットエフェクト
       this.effects.forEach((e) => {
@@ -1085,7 +1537,7 @@
         const name = ASSETS.characters[f.charId].name;
         const pw = 300, ph = 96;
         const px = left ? 10 : W - 10 - pw;
-        drawPlate(c, px, 8, pw, ph, f.charId, left);
+        drawPlate(c, px, 8, pw, ph, themeOf(f.charId), left);
         const x0 = left ? px + 22 : px + pw - 22;
         c.save();
         c.textAlign = left ? 'left' : 'right';
@@ -1105,9 +1557,13 @@
         c.strokeText(title, x0, 34);
         c.fillText(title, x0, 34);
         // ライフ（宝石）
-        for (let i = 0; i < CFG.maxLife; i++) {
-          const cx = left ? x0 + 12 + i * 34 : x0 - 12 - i * 34;
-          drawGem(c, cx, 56, 12, i < f.life, f.charId, now);
+        // ライフの数はキャラごと（重量級は多い）。多いときは間隔と大きさを詰めて同じ幅に収める
+        const n = f.maxLife;
+        const step = Math.min(34, 236 / Math.max(1, n - 1 + 0.7));
+        const gr = Math.min(12, step * 0.36);
+        for (let i = 0; i < n; i++) {
+          const cx = left ? x0 + 12 + i * step : x0 - 12 - i * step;
+          drawGem(c, cx, 56, gr, i < f.life, themeOf(f.charId), now);
         }
         // 勝利ラウンド数（星）
         for (let i = 0; i < this.winsNeeded(); i++) {
@@ -1119,11 +1575,11 @@
           c.font = '800 14px ' + FONT_JP;
           const tx = left ? x0 + 60 : x0 - 60;
           const pulse = 0.65 + 0.35 * Math.sin(now * 0.012);
-          c.shadowColor = f.charId === 'angel' ? 'rgba(130,160,255,' + pulse + ')' : 'rgba(255,120,40,' + pulse + ')';
+          c.shadowColor = 'rgba(' + f.colors.buffGlow + ',' + pulse + ')';
           c.shadowBlur = 10;
           c.lineWidth = 3;
           c.strokeText('速度アップ中！', tx, 89);
-          c.fillStyle = f.charId === 'angel' ? '#cfe0ff' : '#ffcf8a';
+          c.fillStyle = f.colors.buffText;
           c.fillText('速度アップ中！', tx, 89);
         }
         c.restore();
@@ -1261,6 +1717,152 @@
     c.beginPath(); c.ellipse(0, 0, w * 0.32, 10, 0, 0, Math.PI * 2); c.fill();
   }
 
+  // ------------------------------------------------------------
+  // 弾・魔法の描画（画像が無くても図形で描く。sprite を指定すればその画像）
+  // ------------------------------------------------------------
+  function drawProjectile(c, p, now, debug) {
+    const y = p.y - p.height;
+    c.save();
+    // 床の影
+    c.fillStyle = 'rgba(0,0,0,0.3)';
+    c.beginPath(); c.ellipse(p.x, p.y, p.size * 0.9, 4, 0, 0, Math.PI * 2); c.fill();
+    const img = optImage(p.sprite);
+    if (img) {
+      c.translate(p.x, y);
+      if (p.dir < 0) c.scale(-1, 1);
+      const s = p.size * 2.4;
+      c.drawImage(img, -s / 2, -s / 2, s, s);
+    } else {
+      c.globalCompositeOperation = 'lighter';
+      // 尾（進んできた方向へ伸びる光）
+      const tail = Math.min(70, Math.abs(p.x - p.startX));
+      const g = c.createLinearGradient(p.x - p.dir * tail, 0, p.x, 0);
+      g.addColorStop(0, 'rgba(' + p.color + ',0)');
+      g.addColorStop(1, 'rgba(' + p.color + ',0.75)');
+      c.fillStyle = g;
+      c.beginPath();
+      c.moveTo(p.x - p.dir * tail, y);
+      c.lineTo(p.x, y - p.size * 0.45);
+      c.lineTo(p.x, y + p.size * 0.45);
+      c.closePath(); c.fill();
+      // 回転する光の刃（4方向の星）
+      c.translate(p.x, y);
+      c.rotate(now * 0.03 * p.dir);
+      const r = p.size;
+      const glow = c.createRadialGradient(0, 0, 1, 0, 0, r * 1.6);
+      glow.addColorStop(0, 'rgba(255,255,255,0.95)');
+      glow.addColorStop(0.4, 'rgba(' + p.color + ',0.8)');
+      glow.addColorStop(1, 'rgba(' + p.color + ',0)');
+      c.fillStyle = glow;
+      c.beginPath(); c.arc(0, 0, r * 1.6, 0, Math.PI * 2); c.fill();
+      c.fillStyle = 'rgba(255,255,255,0.95)';
+      c.beginPath();
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4, rr = i % 2 === 0 ? r : r * 0.3;
+        c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      c.closePath(); c.fill();
+    }
+    c.restore();
+    if (debug) {
+      c.save();
+      c.strokeStyle = 'rgba(255,80,80,0.8)';
+      c.setLineDash([4, 3]);
+      c.strokeRect(p.x - p.radius, y - 10, p.radius * 2, 20);
+      c.beginPath(); c.moveTo(p.x, p.y - p.depthTol); c.lineTo(p.x, p.y + p.depthTol); c.stroke();
+      c.restore();
+    }
+  }
+
+  function ellipsePath(c, x, y, rx, ry) { c.beginPath(); c.ellipse(x, y, Math.max(0.1, rx), Math.max(0.1, ry), 0, 0, Math.PI * 2); }
+
+  // 魔法陣：予告（輪郭＋たまっていく内側）→ 発動で光が広がる
+  function drawAreaFloor(c, a, game, now) {
+    const col = a.color;
+    const img = optImage(a.sprite);
+    c.save();
+    if (!a.fireAt) {
+      const o = a.owner;
+      const total = Math.max(1, o.hitTime());
+      const k = clamp(o.stateTime / total, 0, 1);
+      if (img) {
+        c.globalAlpha = 0.5 + 0.5 * k;
+        c.drawImage(img, a.x - a.rx, a.y - a.ry, a.rx * 2, a.ry * 2);
+      } else {
+        // 外周（点滅）と、発動に向けて広がる内側
+        c.lineWidth = 2.5;
+        c.strokeStyle = 'rgba(' + col + ',' + (0.55 + 0.35 * Math.sin(now * 0.025)) + ')';
+        ellipsePath(c, a.x, a.y, a.rx, a.ry); c.stroke();
+        c.lineWidth = 1.2;
+        ellipsePath(c, a.x, a.y, a.rx * 0.72, a.ry * 0.72); c.stroke();
+        c.fillStyle = 'rgba(' + col + ',' + (0.12 + 0.22 * k) + ')';
+        ellipsePath(c, a.x, a.y, a.rx * k, a.ry * k); c.fill();
+        // 回る紋様（6本の線）
+        c.strokeStyle = 'rgba(' + col + ',0.6)';
+        c.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const ang = now * 0.002 + i * Math.PI / 3;
+          c.moveTo(a.x + Math.cos(ang) * a.rx * 0.72, a.y + Math.sin(ang) * a.ry * 0.72);
+          c.lineTo(a.x + Math.cos(ang + Math.PI * 2 / 3) * a.rx * 0.72, a.y + Math.sin(ang + Math.PI * 2 / 3) * a.ry * 0.72);
+        }
+        c.stroke();
+      }
+    } else {
+      const k = game.areaRadiusK(a);
+      const t = now - a.fireAt;
+      const fade = 1 - clamp((t - a.expandMs) / Math.max(1, a.lingerMs), 0, 1);
+      c.globalCompositeOperation = 'lighter';
+      if (img) {
+        c.globalAlpha = fade;
+        c.drawImage(img, a.x - a.rx * k, a.y - a.ry * k, a.rx * 2 * k, a.ry * 2 * k);
+      } else {
+        const g = c.createRadialGradient(a.x, a.y, 1, a.x, a.y, Math.max(1, a.rx * k));
+        g.addColorStop(0, 'rgba(255,255,255,' + (0.8 * fade) + ')');
+        g.addColorStop(0.5, 'rgba(' + col + ',' + (0.6 * fade) + ')');
+        g.addColorStop(1, 'rgba(' + col + ',0)');
+        c.save();
+        c.translate(a.x, a.y); c.scale(1, a.ry / a.rx); c.translate(-a.x, -a.y);
+        c.fillStyle = g;
+        c.beginPath(); c.arc(a.x, a.y, Math.max(0.1, a.rx * k), 0, Math.PI * 2); c.fill();
+        c.restore();
+        c.lineWidth = 3;
+        c.strokeStyle = 'rgba(255,255,255,' + (0.9 * fade) + ')';
+        ellipsePath(c, a.x, a.y, a.rx * k, a.ry * k); c.stroke();
+      }
+    }
+    c.restore();
+    if (game.debug) {
+      c.save();
+      c.strokeStyle = 'rgba(255,80,80,0.8)';
+      c.setLineDash([5, 4]);
+      ellipsePath(c, a.x, a.y, a.rx, a.ry); c.stroke();
+      c.restore();
+    }
+  }
+  function drawAreaBurst(c, a, game, now) {
+    if (!a.fireAt) return;
+    const t = now - a.fireAt;
+    const k = game.areaRadiusK(a);
+    const fade = 1 - clamp((t - a.expandMs) / Math.max(1, a.lingerMs), 0, 1);
+    if (fade <= 0) return;
+    const hgt = 190;
+    c.save();
+    c.globalCompositeOperation = 'lighter';
+    const w = a.rx * 0.9 * k;
+    const g = c.createLinearGradient(0, a.y - hgt, 0, a.y);
+    g.addColorStop(0, 'rgba(' + a.color + ',0)');
+    g.addColorStop(0.6, 'rgba(' + a.color + ',' + (0.35 * fade) + ')');
+    g.addColorStop(1, 'rgba(255,255,255,' + (0.55 * fade) + ')');
+    c.fillStyle = g;
+    c.beginPath();
+    c.moveTo(a.x - w, a.y);
+    c.lineTo(a.x - w * 0.6, a.y - hgt);
+    c.lineTo(a.x + w * 0.6, a.y - hgt);
+    c.lineTo(a.x + w, a.y);
+    c.closePath(); c.fill();
+    c.restore();
+  }
+
   // タイトル画面の飾り（待機モーション）
   function drawTitleChar(c, charId, now) {
     const def = ASSETS.characters[charId];
@@ -1275,7 +1877,8 @@
     }
     window.drawCharacter(c, charId, 'idle', 0, now, def.width, def.height, {
       parts: mode === 'apng' ? {} : window.SpriteBank.getParts(charId),
-      partsConfig: mode === 'apng' ? null : def.parts
+      partsConfig: mode === 'apng' ? null : def.parts,
+      motion: motionOverrideOf(charId)
     });
   }
 
@@ -1506,5 +2109,6 @@
   }
 
   window.__game = Game; // デバッグ・テスト用
+  window.__AI = AI;     // テスト用（AI 同士の対戦シミュレーション）
   Game.init();
 })();
