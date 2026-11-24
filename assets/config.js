@@ -189,8 +189,7 @@ window.ASSET_CONFIG = {
         down:     {
           type: 'apng',                // 'apng' | 'frames'（切り替えるだけ）
           src: 'assets/sprites/angel/down.png',
-          duration: 1420, loop: false, scale: 0.5, offsetX: 0, offsetY: 0, fadeOut: false
-          // duration は APNG 本来の長さ（1.42秒）。900 だと最後の着地コマが短く、体が下がって見える切り替わりが飛びやすい
+          duration: 900, loop: false, scale: 0.5, offsetX: 0, offsetY: 0, fadeOut: false
           // コマ送りに切り替えるとき：type を 'frames' にして、次の行のコメントを外す
           // , frames: ['assets/sprites/angel/down_1.png', 'assets/sprites/angel/down_2.png', 'assets/sprites/angel/down_3.png', 'assets/sprites/angel/down_4.png', 'assets/sprites/angel/down_5.png'], frameMs: 100
         }
